@@ -2,17 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Очищаем кэш apt перед установкой
-RUN apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-
-# Устанавливаем только необходимые системные зависимости
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-
-# Копируем requirements и устанавливаем зависимости
+# Копируем requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Устанавливаем минимальный набор для компиляции asyncpg
+# Используем --no-install-recommends чтобы не устанавливать лишнее
+# После установки удаляем gcc чтобы сэкономить место
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y gcc && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Копируем код приложения
 COPY . .
