@@ -1,0 +1,109 @@
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
+from src.bot.config import get_config
+from src.bot.services.menu_constructor import build_user_inline_keyboard
+from src.bot.services.ai_search import ai_search_buttons
+
+search_router = Router(name="search")
+
+
+class SearchStates(StatesGroup):
+    waiting_for_search_query = State()
+
+
+def _is_admin(user_id: int) -> bool:
+    config = get_config()
+    return user_id in config.admin_ids
+
+
+@search_router.message(Command("search"))
+async def search_start_command(message: Message, state: FSMContext) -> None:
+    """Начало поиска через команду."""
+    await state.set_state(SearchStates.waiting_for_search_query)
+    await message.answer("🔍 Введи текст для поиска по кнопкам:")
+
+
+@search_router.callback_query(F.data == "start_search")
+async def search_start_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Начало поиска через кнопку в стартовом меню."""
+    await state.set_state(SearchStates.waiting_for_search_query)
+    await callback.answer()
+    await callback.message.answer("🔍 Введи текст для поиска по кнопкам:")
+
+
+@search_router.message(SearchStates.waiting_for_search_query, F.text)
+async def search_execute(message: Message, state: FSMContext) -> None:
+    """Выполнение поиска."""
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer("Поисковый запрос пустой. Введи текст для поиска.")
+        return
+    
+    if len(query) < 2:
+        await message.answer("Поисковый запрос слишком короткий. Введи минимум 2 символа.")
+        return
+    
+    try:
+        # Всегда используем AI-поиск через DeepSeek
+        error_message, results = await ai_search_buttons(query)
+        
+        # Если AI вернул сообщение об ошибке (бессмысленный запрос)
+        if error_message:
+            # Добавляем кнопку "Назад" и НЕ очищаем состояние, чтобы пользователь мог снова отправить запрос
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+            ])
+            await message.answer(error_message, reply_markup=kb)
+            # НЕ очищаем состояние - пользователь может снова отправить запрос
+            return
+        
+        # Очищаем состояние только если поиск успешен
+        await state.clear()
+        
+        # Если ничего не найдено
+        if not results:
+            await message.answer(
+                f"❌ По запросу <b>«{query}»</b> ничего не найдено.\n"
+                "Попробуй другой запрос или используй более общие слова."
+            )
+            return
+        
+        # Показываем результаты поиска
+        results_text = f"🔍 Найдено кнопок: <b>{len(results)}</b>\n\n"
+        inline_keyboard = []
+        
+        for btn in results[:10]:  # Ограничиваем до 10 результатов
+            parent_info = ""
+            if btn.get("parent_id"):
+                from src.bot.database.buttons import get_button_by_id
+                parent = await get_button_by_id(btn["parent_id"])
+                if parent:
+                    parent_info = f" (внутри «{parent['text']}»)"
+            
+            results_text += f"• <b>{btn['text']}</b>{parent_info}\n"
+            inline_keyboard.append([
+                InlineKeyboardButton(
+                    text=f"📌 {btn['text']}",
+                    callback_data=btn["callback_data"]
+                )
+            ])
+        
+        if len(results) > 10:
+            results_text += f"\n... и ещё {len(results) - 10} кнопок"
+        
+        # Кнопка "Назад"
+        inline_keyboard.append([
+            InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")
+        ])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+        await message.answer(results_text, reply_markup=kb)
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при поиске: {e}")
+        await state.clear()
+

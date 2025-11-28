@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: fresh_auto_memo_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Монтируем код для разработки (можно убрать в продакшене)
+      - ./src:/app/src
+      - ./run_bot.py:/app/run_bot.py
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
