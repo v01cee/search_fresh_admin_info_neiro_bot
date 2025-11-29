@@ -73,6 +73,33 @@ async def init_db() -> None:
             await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES buttons(id) ON DELETE CASCADE")
         except Exception:
             pass
+        try:
+            await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS file_id TEXT")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS file_type TEXT")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS delay INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        # Создаём таблицу для шагов кнопки
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS button_steps (
+                id SERIAL PRIMARY KEY,
+                button_id INTEGER NOT NULL REFERENCES buttons(id) ON DELETE CASCADE,
+                step_number INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                content_text TEXT,
+                file_id TEXT,
+                file_type TEXT,
+                delay INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(button_id, step_number)
+            )
+        """)
 
 
 async def close_db() -> None:

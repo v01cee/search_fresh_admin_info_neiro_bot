@@ -26,25 +26,27 @@ def get_config() -> BotConfig:
     # Получаем токен бота
     token = os.getenv("BOT_TOKEN")
     if not token:
-        raise ValueError("BOT_TOKEN не установлен в переменных окружения")
+        raise ValueError("BOT_TOKEN не найден в переменных окружения. Укажите его в .env файле.")
     
     # Получаем ID админов
-    admin_ids_str = os.getenv("ADMIN_IDS", "")
+    admin_ids_str = os.getenv("ADMIN_IDS")
+    if not admin_ids_str:
+        raise ValueError("ADMIN_IDS не найден в переменных окружения. Укажите его в .env файле.")
     admin_ids = [int(id.strip()) for id in admin_ids_str.split(",") if id.strip()]
     if not admin_ids:
-        raise ValueError("ADMIN_IDS не установлен в переменных окружения")
+        raise ValueError("ADMIN_IDS должен содержать хотя бы один ID администратора.")
     
     # Получаем уровень логирования
     log_level = os.getenv("LOG_LEVEL", "INFO")
     
-    # Получаем настройки БД (обязательные)
+    # Получаем настройки БД
     db_host = os.getenv("DB_HOST")
     if not db_host:
-        raise ValueError("DB_HOST не установлен в переменных окружения")
+        raise ValueError("DB_HOST не найден в переменных окружения. Укажите его в .env файле.")
     
     db_port_str = os.getenv("DB_PORT")
     if not db_port_str:
-        raise ValueError("DB_PORT не установлен в переменных окружения")
+        raise ValueError("DB_PORT не найден в переменных окружения. Укажите его в .env файле.")
     try:
         db_port = int(db_port_str)
     except ValueError:
@@ -52,18 +54,19 @@ def get_config() -> BotConfig:
     
     db_name = os.getenv("DB_NAME")
     if not db_name:
-        raise ValueError("DB_NAME не установлен в переменных окружения")
+        raise ValueError("DB_NAME не найден в переменных окружения. Укажите его в .env файле.")
     
     db_user = os.getenv("DB_USER")
     if not db_user:
-        raise ValueError("DB_USER не установлен в переменных окружения")
+        raise ValueError("DB_USER не найден в переменных окружения. Укажите его в .env файле.")
     
     db_password = os.getenv("DB_PASSWORD")
     if not db_password:
-        raise ValueError("DB_PASSWORD не установлен в переменных окружения")
+        raise ValueError("DB_PASSWORD не найден в переменных окружения. Укажите его в .env файле.")
     
-    # Получаем настройки DeepSeek (опциональные)
+    # Получаем настройки DeepSeek
     deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+    # deepseek_api_key может быть None, если не используется
     ai_service_url = os.getenv("AI_SERVICE_URL", "https://api.deepseek.com/v1")
     
     return BotConfig(

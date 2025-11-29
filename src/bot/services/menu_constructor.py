@@ -18,9 +18,15 @@ async def build_user_inline_keyboard() -> Optional[InlineKeyboardMarkup]:
     # Добавляем пользовательские кнопки
     if buttons:
         for btn in buttons:
+            # Формируем текст кнопки с галочкой и задержкой, если есть
+            button_text = btn["text"]
+            delay = btn.get("delay", 0)
+            if delay and delay > 0:
+                button_text = f"{button_text} ✓ ({delay} сек)"
+            
             inline_buttons.append([
                 InlineKeyboardButton(
-                    text=btn["text"],
+                    text=button_text,
                     callback_data=btn["callback_data"]
                 )
             ])
@@ -52,9 +58,15 @@ async def build_admin_inline_keyboard_with_user_buttons() -> InlineKeyboardMarku
     # Добавляем пользовательские кнопки (каждая в отдельный ряд - столбик)
     if user_buttons:
         for btn in user_buttons:
+            # Формируем текст кнопки с галочкой и задержкой, если есть
+            button_text = btn["text"]
+            delay = btn.get("delay", 0)
+            if delay and delay > 0:
+                button_text = f"{button_text} ✓ ({delay} сек)"
+            
             inline_keyboard.append([
                 InlineKeyboardButton(
-                    text=btn["text"],
+                    text=button_text,
                     callback_data=btn["callback_data"]
                 )
             ])

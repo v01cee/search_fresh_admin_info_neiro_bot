@@ -4,7 +4,7 @@ import asyncpg
 from src.bot.database.db import get_db_pool
 
 
-async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int] = None) -> int:
+async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int] = None, delay: int = 0) -> int:
     """Добавить новую кнопку в БД. Возвращает ID созданной кнопки."""
     pool = get_db_pool()
     # Генерируем callback_data из текста (упрощённо, можно улучшить)
@@ -32,11 +32,12 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
             counter += 1
         
         row = await conn.fetchrow(
-            "INSERT INTO buttons (text, callback_data, message_text, parent_id) VALUES ($1, $2, $3, $4) RETURNING id",
+            "INSERT INTO buttons (text, callback_data, message_text, parent_id, delay) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             text,
             callback_data,
             message_text,
-            parent_id
+            parent_id,
+            delay
         )
         return row["id"]
 
@@ -47,12 +48,12 @@ async def get_all_buttons(parent_id: Optional[int] = None) -> List[dict]:
     async with pool.acquire() as conn:
         if parent_id is not None:
             rows = await conn.fetch(
-                "SELECT id, text, callback_data, message_text, parent_id FROM buttons WHERE parent_id = $1 ORDER BY id",
+                "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE parent_id = $1 ORDER BY id",
                 parent_id
             )
         else:
             rows = await conn.fetch(
-                "SELECT id, text, callback_data, message_text, parent_id FROM buttons WHERE parent_id IS NULL ORDER BY id"
+                "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE parent_id IS NULL ORDER BY id"
             )
         return [dict(row) for row in rows]
 
@@ -62,7 +63,7 @@ async def get_button_by_id(button_id: int) -> Optional[dict]:
     pool = get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, text, callback_data, message_text, parent_id FROM buttons WHERE id = $1",
+            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE id = $1",
             button_id
         )
         return dict(row) if row else None
@@ -73,7 +74,7 @@ async def get_button_by_callback_data(callback_data: str) -> Optional[dict]:
     pool = get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, text, callback_data, message_text, parent_id FROM buttons WHERE callback_data = $1",
+            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE callback_data = $1",
             callback_data
         )
         return dict(row) if row else None
@@ -121,7 +122,7 @@ async def search_buttons(query: str) -> List[dict]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, text, callback_data, message_text, parent_id 
+            SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay 
             FROM buttons 
             WHERE LOWER(text) LIKE $1 OR LOWER(message_text) LIKE $1
             ORDER BY id
@@ -129,4 +130,40 @@ async def search_buttons(query: str) -> List[dict]:
             search_pattern
         )
         return [dict(row) for row in rows]
+
+
+async def update_button_file(button_id: int, file_id: str, file_type: str) -> bool:
+    """Обновить файл кнопки."""
+    pool = get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE buttons SET file_id = $1, file_type = $2 WHERE id = $3",
+            file_id,
+            file_type,
+            button_id
+        )
+        return result == "UPDATE 1"
+
+
+async def remove_button_file(button_id: int) -> bool:
+    """Удалить файл у кнопки."""
+    pool = get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE buttons SET file_id = NULL, file_type = NULL WHERE id = $1",
+            button_id
+        )
+        return result == "UPDATE 1"
+
+
+async def update_button_delay(button_id: int, delay: int) -> bool:
+    """Обновить задержку кнопки."""
+    pool = get_db_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "UPDATE buttons SET delay = $1 WHERE id = $2",
+            delay,
+            button_id
+        )
+        return result == "UPDATE 1"
 
