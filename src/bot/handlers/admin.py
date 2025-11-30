@@ -58,6 +58,30 @@ async def _preserve_admin_mode(state: FSMContext, user_id: int) -> None:
         await state.update_data(admin_mode=True, user_mode=False)
 
 
+async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:
+    """Очищает состояние, сохраняя админский режим."""
+    # Сохраняем админский режим перед очисткой
+    is_admin = _is_admin(user_id)
+    admin_mode_before = False
+    if is_admin:
+        data_before = await state.get_data()
+        admin_mode_before = data_before.get("admin_mode", False)
+    
+    # Очищаем состояние
+    await state.clear()
+    
+    # Восстанавливаем админский режим сразу после очистки
+    if is_admin:
+        # Всегда устанавливаем админский режим для админа, даже если он не был установлен
+        await state.update_data(admin_mode=True, user_mode=False)
+        
+        # Проверяем, что админский режим установлен
+        data_after = await state.get_data()
+        if not data_after.get("admin_mode", False):
+            # Если не установился, пробуем еще раз
+            await state.update_data(admin_mode=True, user_mode=False)
+
+
 async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id: int) -> tuple[InlineKeyboardMarkup, str]:
     """Строит клавиатуру для просмотра кнопки админом. Возвращает (клавиатура, текст сообщения)."""
     button = await get_button_by_id(button_id)
@@ -71,20 +95,24 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
     # Получаем шаги кнопки
     steps = await get_button_steps(button['id'])
     
-    # Проверяем режим админа
+    # Проверяем, является ли пользователь админом
+    is_admin_user = _is_admin(user_id)
+    
+    # Проверяем режим админа и явно устанавливаем, если админ
     data = await state.get_data()
     admin_mode = data.get("admin_mode", False)
     
+    # Если пользователь админ, но admin_mode не установлен - устанавливаем его
+    if is_admin_user and not admin_mode:
+        await state.update_data(admin_mode=True, user_mode=False)
+        admin_mode = True
+    
     inline_keyboard = []
     
-    # Если есть шаги и админ в режиме админа - показываем админскую клавиатуру
-    if steps and _is_admin(user_id) and admin_mode:
-        # Кнопка "Редактировать шаги"
-        inline_keyboard.append([
-            InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
-        ])
-        
-        # Добавляем дочерние кнопки, если они есть
+    # Если пользователь админ - ВСЕГДА показываем админскую клавиатуру, независимо от admin_mode в state
+    # (admin_mode нужен для других проверок, но для показа меню достаточно проверки _is_admin)
+    if is_admin_user:
+        # Сначала добавляем дочерние кнопки, если они есть
         if child_buttons:
             for btn in child_buttons:
                 button_text = btn["text"]
@@ -94,6 +122,11 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
                 inline_keyboard.append([
                     InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
                 ])
+        
+        # Кнопка "Редактировать шаги" (показываем всегда, даже если шагов нет)
+        inline_keyboard.append([
+            InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
+        ])
         
         # Админские кнопки
         inline_keyboard.append([
@@ -211,7 +244,7 @@ async def admin_add_button_start_with_parent(callback: CallbackQuery, state: FSM
         return
 
     try:
-        await state.clear()
+        await _clear_state_preserving_admin(state, callback.from_user.id)
         
         parent_id_str = callback.data.replace("admin_add_button_", "")
         if not parent_id_str:
@@ -241,7 +274,7 @@ async def admin_add_button_start(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("У вас нет прав.", show_alert=True)
         return
 
-    await state.clear()
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     await state.update_data(steps=[], next_delay=0, parent_id=None)
     await state.set_state(AdminStates.waiting_for_new_button_text)
     await callback.answer()
@@ -256,7 +289,7 @@ async def admin_add_button_start(callback: CallbackQuery, state: FSMContext) -> 
 @admin_router.message(AdminStates.waiting_for_new_button_text, F.text)
 async def admin_add_button_text_save(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     text = (message.text or "").strip()
@@ -289,7 +322,7 @@ async def admin_add_button_text_save(message: Message, state: FSMContext) -> Non
 async def admin_add_button_content_text(message: Message, state: FSMContext) -> None:
     """Обработка текста как контента кнопки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     content_text = (message.text or "").strip()
@@ -337,7 +370,7 @@ async def admin_add_button_content_text(message: Message, state: FSMContext) -> 
 async def admin_add_button_content_file(message: Message, state: FSMContext) -> None:
     """Обработка файла как контента кнопки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     # Определяем тип файла и получаем file_id
@@ -429,7 +462,7 @@ async def admin_edit_text_start(callback: CallbackQuery, state: FSMContext) -> N
 async def admin_edit_start_message_save(message: Message, state: FSMContext) -> None:
     """Сохранение нового стартового сообщения."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     new_text = (message.text or "").strip()
@@ -442,12 +475,8 @@ async def admin_edit_start_message_save(message: Message, state: FSMContext) -> 
         success = await update_start_message(new_text)
         
         if success:
-            # Сохраняем админский режим перед очисткой
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
-            
-            # Восстанавливаем админский режим после очистки
-            await state.update_data(admin_mode=True, user_mode=False)
+            # Очищаем состояние, сохраняя админский режим
+            await _clear_state_preserving_admin(state, message.from_user.id)
             
             # Сначала отправляем сообщение об успехе
             await message.answer("✅ Стартовое сообщение успешно изменено.")
@@ -458,14 +487,10 @@ async def admin_edit_start_message_save(message: Message, state: FSMContext) -> 
             await message.answer(updated_start_text, reply_markup=admin_kb)
         else:
             await message.answer("❌ Не удалось обновить стартовое сообщение.")
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
-            await state.update_data(admin_mode=True, user_mode=False)
+            await _clear_state_preserving_admin(state, message.from_user.id)
     except Exception as e:
         await message.answer(f"❌ Ошибка при изменении стартового сообщения: {e}")
-        await _preserve_admin_mode(state, message.from_user.id)
-        await state.clear()
-        await state.update_data(admin_mode=True, user_mode=False)
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
 
 @admin_router.callback_query(F.data.startswith("edit_text_btn_"))
@@ -492,7 +517,7 @@ async def admin_edit_text_select_button(callback: CallbackQuery, state: FSMConte
         )
     else:
         await callback.answer("Кнопка не найдена.", show_alert=True)
-        await state.clear()
+        await _clear_state_preserving_admin(state, callback.from_user.id)
 
 
 @admin_router.callback_query(F.data.startswith("edit_button_name_cancel_"))
@@ -503,9 +528,7 @@ async def edit_button_name_cancel(callback: CallbackQuery, state: FSMContext) ->
         return
     
     button_id = int(callback.data.replace("edit_button_name_cancel_", ""))
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
@@ -520,9 +543,7 @@ async def edit_button_message_cancel(callback: CallbackQuery, state: FSMContext)
         return
     
     button_id = int(callback.data.replace("edit_button_message_cancel_", ""))
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
@@ -537,9 +558,7 @@ async def add_file_cancel(callback: CallbackQuery, state: FSMContext) -> None:
         return
     
     button_id = int(callback.data.replace("add_file_cancel_", ""))
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
@@ -583,9 +602,7 @@ async def change_step_delay_cancel(callback: CallbackQuery, state: FSMContext) -
     button_id = int(parts[0])
     step_number = int(parts[1])
     
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     await callback.answer("Отменено")
     
@@ -627,9 +644,7 @@ async def change_step_content_cancel(callback: CallbackQuery, state: FSMContext)
     button_id = int(parts[0])
     step_number = int(parts[1])
     
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     await callback.answer("Отменено")
     
@@ -668,9 +683,7 @@ async def add_step_cancel(callback: CallbackQuery, state: FSMContext) -> None:
         return
     
     button_id = int(callback.data.replace("add_step_cancel_", ""))
-    await state.clear()
-    await _preserve_admin_mode(state, callback.from_user.id)
-    await state.update_data(admin_mode=True, user_mode=False)
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     
     await callback.answer("Отменено")
     
@@ -709,7 +722,7 @@ async def admin_edit_text_cancel(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("У вас нет прав.", show_alert=True)
         return
 
-    await state.clear()
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     await callback.answer("Отменено")
     admin_kb = await build_admin_inline_keyboard_with_user_buttons()
     await callback.message.answer(
@@ -721,7 +734,7 @@ async def admin_edit_text_cancel(callback: CallbackQuery, state: FSMContext) -> 
 @admin_router.message(AdminStates.waiting_for_new_text_for_button, F.text)
 async def admin_edit_text_save(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     data = await state.get_data()
@@ -729,7 +742,7 @@ async def admin_edit_text_save(message: Message, state: FSMContext) -> None:
     
     if not button_id:
         await message.answer("Ошибка: не найден ID кнопки.")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     new_text = (message.text or "").strip()
@@ -739,7 +752,7 @@ async def admin_edit_text_save(message: Message, state: FSMContext) -> None:
 
     try:
         success = await update_button_text(button_id, new_text)
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
         if success:
             admin_kb = await build_admin_inline_keyboard_with_user_buttons()
@@ -751,7 +764,7 @@ async def admin_edit_text_save(message: Message, state: FSMContext) -> None:
             await message.answer("❌ Кнопка не найдена или не удалось обновить.")
     except Exception as e:
         await message.answer(f"❌ Ошибка при изменении текста: {e}")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
 
 @admin_router.callback_query(F.data == "admin_delete_button")
@@ -838,7 +851,7 @@ async def edit_button_name_start(callback: CallbackQuery, state: FSMContext) -> 
 async def edit_button_name_save(message: Message, state: FSMContext) -> None:
     """Сохранение нового названия кнопки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     data = await state.get_data()
@@ -846,7 +859,7 @@ async def edit_button_name_save(message: Message, state: FSMContext) -> None:
     
     if not button_id:
         await message.answer("Ошибка: не найден ID кнопки.")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     new_text = (message.text or "").strip()
@@ -863,26 +876,33 @@ async def edit_button_name_save(message: Message, state: FSMContext) -> None:
         success = await update_button_text(button_id, new_text)
         
         if success:
-            # Сохраняем админский режим перед очисткой
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
+            # Получаем обновленную кнопку для сообщения об успехе
+            updated_button = await get_button_by_id(button_id)
             
-            # Восстанавливаем админский режим после очистки
-            await state.update_data(admin_mode=True, user_mode=False)
+            # Очищаем состояние, сохраняя админский режим
+            await _clear_state_preserving_admin(state, message.from_user.id)
+            
+            # Явно устанавливаем админский режим (на всякий случай)
+            if _is_admin(message.from_user.id):
+                await state.update_data(admin_mode=True, user_mode=False)
             
             # Строим клавиатуру для просмотра кнопки (не главное меню)
             button_kb, button_text = await _build_button_view_keyboard(button_id, state, message.from_user.id)
-            await message.answer(button_text, reply_markup=button_kb)
+            
+            # Отправляем сообщение об успехе вместе с клавиатурой
+            if updated_button:
+                await message.answer(
+                    f"✅ Название кнопки успешно изменено на: <b>{updated_button['text']}</b>\n\n{button_text}",
+                    reply_markup=button_kb
+                )
+            else:
+                await message.answer(button_text, reply_markup=button_kb)
         else:
             await message.answer("❌ Кнопка не найдена или не удалось обновить.")
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
-            await state.update_data(admin_mode=True, user_mode=False)
+            await _clear_state_preserving_admin(state, message.from_user.id)
     except Exception as e:
         await message.answer(f"❌ Ошибка при изменении названия: {e}")
-        await _preserve_admin_mode(state, message.from_user.id)
-        await state.clear()
-        await state.update_data(admin_mode=True, user_mode=False)
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
 
 @admin_router.callback_query(F.data.startswith("edit_button_message_"))
@@ -922,7 +942,7 @@ async def edit_button_message_start(callback: CallbackQuery, state: FSMContext) 
 async def edit_button_message_save(message: Message, state: FSMContext) -> None:
     """Сохранение нового текста сообщения кнопки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     data = await state.get_data()
@@ -930,7 +950,7 @@ async def edit_button_message_save(message: Message, state: FSMContext) -> None:
     
     if not button_id:
         await message.answer("Ошибка: не найден ID кнопки.")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     new_message_text = (message.text or "").strip()
@@ -942,12 +962,14 @@ async def edit_button_message_save(message: Message, state: FSMContext) -> None:
         success = await update_button_message_text(button_id, new_message_text)
         
         if success:
-            # Сохраняем админский режим перед очисткой
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
+            # Очищаем состояние, сохраняя админский режим
+            await _clear_state_preserving_admin(state, message.from_user.id)
             
-            # Восстанавливаем админский режим после очистки
-            await state.update_data(admin_mode=True, user_mode=False)
+            # Убеждаемся, что админский режим установлен перед построением клавиатуры
+            if _is_admin(message.from_user.id):
+                data = await state.get_data()
+                if not data.get("admin_mode", False):
+                    await state.update_data(admin_mode=True, user_mode=False)
             
             # Строим клавиатуру для просмотра кнопки (не главное меню)
             button_kb, button_text = await _build_button_view_keyboard(button_id, state, message.from_user.id)
@@ -957,14 +979,10 @@ async def edit_button_message_save(message: Message, state: FSMContext) -> None:
             )
         else:
             await message.answer("❌ Кнопка не найдена или не удалось обновить.")
-            await _preserve_admin_mode(state, message.from_user.id)
-            await state.clear()
-            await state.update_data(admin_mode=True, user_mode=False)
+            await _clear_state_preserving_admin(state, message.from_user.id)
     except Exception as e:
         await message.answer(f"❌ Ошибка при изменении текста сообщения: {e}")
-        await _preserve_admin_mode(state, message.from_user.id)
-        await state.clear()
-        await state.update_data(admin_mode=True, user_mode=False)
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
 
 @admin_router.callback_query(F.data.startswith("delete_button_"))
@@ -1063,7 +1081,7 @@ async def remove_file_handler(callback: CallbackQuery) -> None:
 async def handle_file_upload(message: Message, state: FSMContext) -> None:
     """Обработка загруженного файла."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     data = await state.get_data()
@@ -1071,7 +1089,7 @@ async def handle_file_upload(message: Message, state: FSMContext) -> None:
     
     if not button_id:
         await message.answer("❌ Ошибка: не указан ID кнопки.")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
 
     try:
@@ -1198,7 +1216,7 @@ async def button_file_caption_no(callback: CallbackQuery, state: FSMContext) -> 
 async def button_file_caption_save(message: Message, state: FSMContext) -> None:
     """Сохранение текста для файла существующей кнопки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     data = await state.get_data()
@@ -1247,13 +1265,28 @@ async def cancel_button_creation(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("У вас нет прав.", show_alert=True)
         return
     
-    await state.clear()
+    # Получаем parent_id из state, если есть, чтобы вернуться к родительской кнопке
+    data = await state.get_data()
+    parent_id = data.get("parent_id")
+    
+    await _clear_state_preserving_admin(state, callback.from_user.id)
     await callback.answer("❌ Создание кнопки отменено")
     
-    # Возвращаем в главное меню
-    admin_kb = await build_admin_inline_keyboard_with_user_buttons()
-    start_text = await get_start_message()
-    await callback.message.answer(start_text, reply_markup=admin_kb)
+    # Если была родительская кнопка, возвращаемся к ней, иначе в главное меню
+    if parent_id:
+        # Убеждаемся, что админский режим установлен перед построением клавиатуры
+        if _is_admin(callback.from_user.id):
+            data = await state.get_data()
+            if not data.get("admin_mode", False):
+                await state.update_data(admin_mode=True, user_mode=False)
+        
+        button_kb, button_text = await _build_button_view_keyboard(parent_id, state, callback.from_user.id)
+        await callback.message.answer(button_text, reply_markup=button_kb)
+    else:
+        # Возвращаем в главное меню
+        admin_kb = await build_admin_inline_keyboard_with_user_buttons()
+        start_text = await get_start_message()
+        await callback.message.answer(start_text, reply_markup=admin_kb)
 
 
 @admin_router.callback_query(F.data == "button_add_delay")
@@ -1310,7 +1343,7 @@ async def button_delay_back(callback: CallbackQuery, state: FSMContext) -> None:
 async def file_caption_save(message: Message, state: FSMContext) -> None:
     """Сохранение текста для файла."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     caption_text = (message.text or "").strip()
@@ -1462,7 +1495,7 @@ async def file_caption_cancel(callback: CallbackQuery, state: FSMContext) -> Non
 async def button_delay_save(message: Message, state: FSMContext) -> None:
     """Сохранение задержки."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     try:
@@ -1502,7 +1535,7 @@ async def button_delay_save(message: Message, state: FSMContext) -> None:
 async def admin_finalization_text_handler(message: Message, state: FSMContext) -> None:
     """Обработка текста в состоянии финализации - добавление нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     content_text = (message.text or "").strip()
@@ -1547,7 +1580,7 @@ async def admin_finalization_text_handler(message: Message, state: FSMContext) -
 async def admin_finalization_file_handler(message: Message, state: FSMContext) -> None:
     """Обработка файла в состоянии финализации - добавление нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     # Определяем тип файла и получаем file_id
@@ -1645,10 +1678,17 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
     button_text = data.get("button_text")
     steps = data.get("steps", [])
     parent_id = data.get("parent_id")
+    user_id = message.from_user.id
+    
+    # Сохраняем админский режим перед очисткой
+    await _preserve_admin_mode(state, user_id)
     
     if not button_text:
         await message.answer("Ошибка: не найден текст кнопки.")
         await state.clear()
+        # Восстанавливаем админский режим
+        if _is_admin(user_id):
+            await state.update_data(admin_mode=True, user_mode=False)
         return
     
     if not steps:
@@ -1671,8 +1711,6 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
                 delay=step.get("delay", 0)
             )
         
-        await state.clear()
-        
         # Показываем результат
         if parent_id:
             from src.bot.database.start_message import get_start_message
@@ -1680,48 +1718,22 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
             parent_button = await get_button_by_id(parent_id)
             if parent_button:
                 steps_count = len(steps)
+                
+                # Очищаем состояние, сохраняя админский режим
+                await _clear_state_preserving_admin(state, user_id)
+                
+                # Явно устанавливаем админский режим (на всякий случай)
+                if _is_admin(user_id):
+                    await state.update_data(admin_mode=True, user_mode=False)
+                
+                # Строим клавиатуру ДО отправки сообщения об успехе
+                admin_kb, admin_text = await _build_button_view_keyboard(parent_id, state, user_id)
+                
+                # Отправляем сообщение об успехе вместе с клавиатурой
                 await message.answer(
-                    f"✅ Кнопка <b>{button_text}</b> с {steps_count} шагами добавлена внутрь кнопки <b>{parent_button['text']}</b>."
+                    f"✅ Кнопка <b>{button_text}</b> с {steps_count} шагами добавлена внутрь кнопки <b>{parent_button['text']}</b>.\n\n{admin_text}",
+                    reply_markup=admin_kb
                 )
-                
-                # Показываем родительскую кнопку
-                from src.bot.database.buttons import get_all_buttons as get_child_buttons
-                parent_message_text = parent_button.get("message_text") or await get_start_message()
-                child_buttons = await get_child_buttons(parent_id=parent_id)
-                inline_keyboard = []
-                
-                if child_buttons:
-                    for btn in child_buttons:
-                        # Формируем текст кнопки с галочкой и задержкой, если есть
-                        button_text = btn["text"]
-                        delay = btn.get("delay", 0)
-                        if delay and delay > 0:
-                            button_text = f"{button_text} ✓ ({delay} сек)"
-                        
-                        inline_keyboard.append([
-                            InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
-                        ])
-                
-                # Проверяем, есть ли шаги у родительской кнопки
-                from src.bot.database.button_steps import get_button_steps
-                parent_steps = await get_button_steps(parent_id)
-                
-                if parent_steps:
-                    inline_keyboard.append([InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{parent_id}")])
-                
-                inline_keyboard.append([InlineKeyboardButton(text="➕ Добавить кнопку", callback_data=f"admin_add_button_{parent_id}")])
-                inline_keyboard.append([InlineKeyboardButton(text="✏️ Изменить текст кнопки", callback_data=f"edit_button_name_{parent_id}")])
-                inline_keyboard.append([InlineKeyboardButton(text="🗑️ Удалить кнопку", callback_data=f"delete_button_{parent_id}")])
-                
-                if parent_button.get("parent_id"):
-                    parent_parent = await get_button_by_id(parent_button["parent_id"])
-                    if parent_parent:
-                        inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data=parent_parent["callback_data"])])
-                else:
-                    inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")])
-                
-                kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
-                await message.answer(parent_message_text, reply_markup=kb)
                 return
         
         # Если кнопка в главном меню
@@ -1739,6 +1751,9 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
     except Exception as e:
         await message.answer(f"❌ Ошибка при добавлении кнопки: {e}")
         await state.clear()
+        # Восстанавливаем админский режим
+        if _is_admin(user_id):
+            await state.update_data(admin_mode=True, user_mode=False)
 
 
 # ВАЖНО: Этот обработчик должен быть ПОСЛЕ edit_step_, так как edit_step_ более специфичен
@@ -1855,7 +1870,7 @@ async def add_step_start(callback: CallbackQuery, state: FSMContext) -> None:
 async def add_step_text_handler(message: Message, state: FSMContext) -> None:
     """Обработка текста для нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     content_text = (message.text or "").strip()
@@ -1891,7 +1906,7 @@ async def add_step_text_handler(message: Message, state: FSMContext) -> None:
 async def add_step_file_handler(message: Message, state: FSMContext) -> None:
     """Обработка файла для нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     # Определяем тип файла и получаем file_id
@@ -1984,7 +1999,7 @@ async def new_step_file_caption_yes(callback: CallbackQuery, state: FSMContext) 
 async def new_step_file_caption_save(message: Message, state: FSMContext) -> None:
     """Сохранение текста для файла нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     caption_text = (message.text or "").strip()
@@ -2057,7 +2072,7 @@ async def new_step_file_caption_no(callback: CallbackQuery, state: FSMContext) -
 async def new_step_position_save(message: Message, state: FSMContext) -> None:
     """Сохранение позиции нового шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     try:
@@ -2458,7 +2473,7 @@ async def change_step_delay_start(callback: CallbackQuery, state: FSMContext) ->
 async def change_step_delay_save(message: Message, state: FSMContext) -> None:
     """Сохранение новой задержки шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     try:
@@ -2550,7 +2565,7 @@ async def change_step_content_start(callback: CallbackQuery, state: FSMContext) 
 async def change_step_text_save(message: Message, state: FSMContext) -> None:
     """Сохранение нового текста для шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     content_text = (message.text or "").strip()
@@ -2618,7 +2633,7 @@ async def change_step_text_save(message: Message, state: FSMContext) -> None:
 async def change_step_file_save(message: Message, state: FSMContext) -> None:
     """Сохранение нового файла для шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     # Определяем тип файла и получаем file_id
@@ -2776,7 +2791,7 @@ async def step_file_caption_no(callback: CallbackQuery, state: FSMContext) -> No
 async def step_file_caption_save(message: Message, state: FSMContext) -> None:
     """Сохранение текста для файла при изменении шага."""
     if not _is_admin(message.from_user.id):
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         return
     
     data = await state.get_data()

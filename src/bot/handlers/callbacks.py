@@ -118,20 +118,24 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
         # Получаем шаги кнопки
         steps = await get_button_steps(button['id'])
         
-        # Проверяем, админ ли пользователь и есть ли шаги
+        # Проверяем, является ли пользователь админом
+        is_admin_user = _is_admin(callback.from_user.id)
+        
+        # Проверяем режим админа и устанавливаем, если админ
         data = await state.get_data()
         admin_mode = data.get("admin_mode", False)
         
-        if steps and _is_admin(callback.from_user.id) and admin_mode:
+        # Если пользователь админ, но admin_mode не установлен - устанавливаем его
+        if is_admin_user and not admin_mode:
+            await state.update_data(admin_mode=True, user_mode=False)
+            admin_mode = True
+        
+        # Если пользователь админ - ВСЕГДА показываем админ-меню, независимо от admin_mode в state
+        if is_admin_user:
             # Если есть шаги и пользователь админ - НЕ отправляем шаги, показываем только админскую клавиатуру
             admin_keyboard = []
             
-            # Кнопка "Редактировать шаги"
-            admin_keyboard.append([
-                InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
-            ])
-            
-            # Добавляем дочерние кнопки, если они есть
+            # Сначала добавляем дочерние кнопки, если они есть
             if child_buttons:
                 for btn in child_buttons:
                     button_text = btn["text"]
@@ -141,6 +145,11 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                     admin_keyboard.append([
                         InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
                     ])
+            
+            # Кнопка "Редактировать шаги"
+            admin_keyboard.append([
+                InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
+            ])
             
             # Админские кнопки
             admin_keyboard.append([
@@ -222,16 +231,12 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                         await callback.message.answer(text_to_send_separately)
             
             # После отправки всех шагов показываем клавиатуру
-            # Если админ в админском режиме - показываем админскую клавиатуру
-            if _is_admin(callback.from_user.id) and admin_mode:
+            # Если пользователь админ - ВСЕГДА показываем админскую клавиатуру
+            # (admin_mode уже проверен и установлен выше, но проверяем is_admin_user для надежности)
+            if is_admin_user:
                 admin_keyboard = []
                 
-                # Кнопка "Редактировать шаги"
-                admin_keyboard.append([
-                    InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
-                ])
-                
-                # Добавляем дочерние кнопки, если они есть
+                # Сначала добавляем дочерние кнопки, если они есть
                 if child_buttons:
                     for btn in child_buttons:
                         button_text = btn["text"]
@@ -241,6 +246,11 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                         admin_keyboard.append([
                             InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
                         ])
+                
+                # Кнопка "Редактировать шаги"
+                admin_keyboard.append([
+                    InlineKeyboardButton(text="✏️ Редактировать шаги", callback_data=f"edit_steps_{button['id']}")
+                ])
                 
                 # Админские кнопки
                 admin_keyboard.append([

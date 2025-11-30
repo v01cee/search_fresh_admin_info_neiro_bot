@@ -36,7 +36,7 @@ def get_config() -> BotConfig:
     if not admin_ids:
         raise ValueError("ADMIN_IDS должен содержать хотя бы один ID администратора.")
     
-    # Получаем уровень логирования
+    # Получаем уровень логирования (опционально, по умолчанию INFO)
     log_level = os.getenv("LOG_LEVEL", "INFO")
     
     # Получаем настройки БД
@@ -64,9 +64,8 @@ def get_config() -> BotConfig:
     if not db_password:
         raise ValueError("DB_PASSWORD не найден в переменных окружения. Укажите его в .env файле.")
     
-    # Получаем настройки DeepSeek
+    # Получаем настройки DeepSeek (опционально)
     deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-    # deepseek_api_key может быть None, если не используется
     ai_service_url = os.getenv("AI_SERVICE_URL", "https://api.deepseek.com/v1")
     
     return BotConfig(

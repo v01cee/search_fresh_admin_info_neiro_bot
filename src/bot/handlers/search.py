@@ -20,6 +20,18 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
 
 
+async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:
+    """Очищает состояние, сохраняя админский режим."""
+    # Сохраняем админский режим перед очисткой
+    if _is_admin(user_id):
+        await state.update_data(admin_mode=True, user_mode=False)
+    # Очищаем состояние
+    await state.clear()
+    # Восстанавливаем админский режим
+    if _is_admin(user_id):
+        await state.update_data(admin_mode=True, user_mode=False)
+
+
 @search_router.message(Command("search"))
 async def search_start_command(message: Message, state: FSMContext) -> None:
     """Начало поиска через команду."""
@@ -62,7 +74,7 @@ async def search_execute(message: Message, state: FSMContext) -> None:
             return
         
         # Очищаем состояние только если поиск успешен
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
         
         # Если ничего не найдено
         if not results:
@@ -105,5 +117,5 @@ async def search_execute(message: Message, state: FSMContext) -> None:
         
     except Exception as e:
         await message.answer(f"❌ Ошибка при поиске: {e}")
-        await state.clear()
+        await _clear_state_preserving_admin(state, message.from_user.id)
 
