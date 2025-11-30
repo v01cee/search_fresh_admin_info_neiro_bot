@@ -20,6 +20,23 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
 
 
+# Максимальная длина callback_data в Telegram (64 байта)
+MAX_CALLBACK_DATA_LENGTH = 64
+
+
+def _truncate_callback_data(callback_data: str) -> str:
+    """Обрезает callback_data до максимальной длины, если необходимо."""
+    if len(callback_data.encode('utf-8')) <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    # Обрезаем по байтам, а не по символам
+    encoded = callback_data.encode('utf-8')
+    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH]
+    # Убеждаемся, что не обрезали в середине UTF-8 символа
+    while truncated and truncated[-1] & 0b11000000 == 0b10000000:
+        truncated = truncated[:-1]
+    return truncated.decode('utf-8', errors='ignore')
+
+
 async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:
     """Очищает состояние, сохраняя админский режим."""
     # Сохраняем админский режим перед очисткой
@@ -100,7 +117,7 @@ async def search_execute(message: Message, state: FSMContext) -> None:
             inline_keyboard.append([
                 InlineKeyboardButton(
                     text=f"📌 {btn['text']}",
-                    callback_data=btn["callback_data"]
+                    callback_data=_truncate_callback_data(btn["callback_data"])
                 )
             ])
         

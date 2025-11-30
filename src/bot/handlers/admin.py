@@ -52,6 +52,23 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
 
 
+# Максимальная длина callback_data в Telegram (64 байта)
+MAX_CALLBACK_DATA_LENGTH = 64
+
+
+def _truncate_callback_data(callback_data: str) -> str:
+    """Обрезает callback_data до максимальной длины, если необходимо."""
+    if len(callback_data.encode('utf-8')) <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    # Обрезаем по байтам, а не по символам
+    encoded = callback_data.encode('utf-8')
+    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH]
+    # Убеждаемся, что не обрезали в середине UTF-8 символа
+    while truncated and truncated[-1] & 0b11000000 == 0b10000000:
+        truncated = truncated[:-1]
+    return truncated.decode('utf-8', errors='ignore')
+
+
 async def _preserve_admin_mode(state: FSMContext, user_id: int) -> None:
     """Сохраняет режим админа при очистке состояния."""
     if _is_admin(user_id):
@@ -120,7 +137,7 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
                 if delay and delay > 0:
                     button_text = f"{button_text} ✓ ({delay} сек)"
                 inline_keyboard.append([
-                    InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
+                    InlineKeyboardButton(text=button_text, callback_data=_truncate_callback_data(btn["callback_data"]))
                 ])
         
         # Кнопка "Редактировать шаги" (показываем всегда, даже если шагов нет)
@@ -144,7 +161,7 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
             parent_button = await get_button_by_id(button["parent_id"])
             if parent_button:
                 inline_keyboard.append([
-                    InlineKeyboardButton(text="◀️ Назад", callback_data=parent_button["callback_data"])
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(parent_button["callback_data"]))
                 ])
         else:
             inline_keyboard.append([
@@ -161,7 +178,7 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
                 if delay and delay > 0:
                     button_text = f"{button_text} ✓ ({delay} сек)"
                 inline_keyboard.append([
-                    InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
+                    InlineKeyboardButton(text=button_text, callback_data=_truncate_callback_data(btn["callback_data"]))
                 ])
         
         # Админские кнопки, если админ в режиме админа
@@ -193,7 +210,7 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
             parent_button = await get_button_by_id(button["parent_id"])
             if parent_button:
                 inline_keyboard.append([
-                    InlineKeyboardButton(text="◀️ Назад", callback_data=parent_button["callback_data"])
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(parent_button["callback_data"]))
                 ])
         else:
             inline_keyboard.append([
@@ -1810,7 +1827,7 @@ async def edit_steps_handler(callback: CallbackQuery, state: FSMContext) -> None
             ])
         else:
             inline_keyboard.append([
-                InlineKeyboardButton(text="◀️ Назад", callback_data=button["callback_data"])
+                InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(button["callback_data"]))
             ])
         
         kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
@@ -2191,7 +2208,7 @@ async def confirm_add_step_handler(callback: CallbackQuery, state: FSMContext) -
                 InlineKeyboardButton(text="➕ Добавление нового шага", callback_data=f"add_step_{button_id}")
             ])
             inline_keyboard.append([
-                InlineKeyboardButton(text="◀️ Назад", callback_data=button["callback_data"])
+                InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(button["callback_data"]))
             ])
             
             kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
@@ -2424,7 +2441,7 @@ async def delete_step_handler(callback: CallbackQuery, state: FSMContext) -> Non
                 )
             else:
                 inline_keyboard.append([
-                    InlineKeyboardButton(text="◀️ Назад", callback_data=button["callback_data"])
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(button["callback_data"]))
                 ])
                 kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
                 await callback.message.answer(

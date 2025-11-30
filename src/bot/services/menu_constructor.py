@@ -4,6 +4,22 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from src.bot.database.buttons import get_all_buttons
 
+# Максимальная длина callback_data в Telegram (64 байта)
+MAX_CALLBACK_DATA_LENGTH = 64
+
+
+def _truncate_callback_data(callback_data: str) -> str:
+    """Обрезает callback_data до максимальной длины, если необходимо."""
+    if len(callback_data.encode('utf-8')) <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    # Обрезаем по байтам, а не по символам
+    encoded = callback_data.encode('utf-8')
+    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH]
+    # Убеждаемся, что не обрезали в середине UTF-8 символа
+    while truncated and truncated[-1] & 0b11000000 == 0b10000000:
+        truncated = truncated[:-1]
+    return truncated.decode('utf-8', errors='ignore')
+
 
 async def build_user_inline_keyboard() -> Optional[InlineKeyboardMarkup]:
     """
@@ -27,7 +43,7 @@ async def build_user_inline_keyboard() -> Optional[InlineKeyboardMarkup]:
             inline_buttons.append([
                 InlineKeyboardButton(
                     text=button_text,
-                    callback_data=btn["callback_data"]
+                    callback_data=_truncate_callback_data(btn["callback_data"])
                 )
             ])
     

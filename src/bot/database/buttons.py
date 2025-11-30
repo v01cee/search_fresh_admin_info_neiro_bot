@@ -8,13 +8,20 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
     """Добавить новую кнопку в БД. Возвращает ID созданной кнопки."""
     pool = get_db_pool()
     # Генерируем callback_data из текста (упрощённо, можно улучшить)
-    callback_data = f"btn_{text.lower().replace(' ', '_')[:50]}"
+    # Telegram ограничивает callback_data до 64 байт
+    MAX_CALLBACK_DATA_LENGTH = 64
+    
+    # Создаем базовый callback_data из текста
+    base_callback = f"btn_{text.lower().replace(' ', '_')}"
+    
+    # Если есть parent_id, добавляем его к callback_data для уникальности
+    if parent_id:
+        base_callback = f"{base_callback}_p{parent_id}"
+    
+    # Обрезаем до максимальной длины, оставляя место для суффикса при необходимости
+    callback_data = base_callback[:MAX_CALLBACK_DATA_LENGTH - 10]  # Оставляем место для суффикса
     
     async with pool.acquire() as conn:
-        # Если есть parent_id, добавляем его к callback_data для уникальности
-        if parent_id:
-            callback_data = f"{callback_data}_p{parent_id}"
-        
         # Проверяем, нет ли уже такой кнопки с таким же parent_id
         existing = await conn.fetchrow(
             "SELECT id FROM buttons WHERE text = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))",
@@ -28,8 +35,18 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
         counter = 1
         original_callback = callback_data
         while await conn.fetchrow("SELECT id FROM buttons WHERE callback_data = $1", callback_data):
-            callback_data = f"{original_callback}_{counter}"
+            suffix = f"_{counter}"
+            # Обрезаем callback_data, чтобы поместился суффикс
+            max_base_length = MAX_CALLBACK_DATA_LENGTH - len(suffix)
+            callback_data = f"{original_callback[:max_base_length]}{suffix}"
             counter += 1
+            # Защита от бесконечного цикла
+            if counter > 1000:
+                # Если не удалось найти уникальный callback_data, используем хеш
+                import hashlib
+                hash_suffix = hashlib.md5(f"{text}_{parent_id}_{counter}".encode()).hexdigest()[:8]
+                callback_data = f"btn_{hash_suffix}"
+                break
         
         row = await conn.fetchrow(
             "INSERT INTO buttons (text, callback_data, message_text, parent_id, delay) VALUES ($1, $2, $3, $4, $5) RETURNING id",

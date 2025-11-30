@@ -11,6 +11,22 @@ from src.bot.services.menu_constructor import build_user_inline_keyboard, build_
 
 callback_router = Router(name="callbacks")
 
+# Максимальная длина callback_data в Telegram (64 байта)
+MAX_CALLBACK_DATA_LENGTH = 64
+
+
+def _truncate_callback_data(callback_data: str) -> str:
+    """Обрезает callback_data до максимальной длины, если необходимо."""
+    if len(callback_data.encode('utf-8')) <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    # Обрезаем по байтам, а не по символам
+    encoded = callback_data.encode('utf-8')
+    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH]
+    # Убеждаемся, что не обрезали в середине UTF-8 символа
+    while truncated and truncated[-1] & 0b11000000 == 0b10000000:
+        truncated = truncated[:-1]
+    return truncated.decode('utf-8', errors='ignore')
+
 
 def _is_admin(user_id: int) -> bool:
     config = get_config()
@@ -46,7 +62,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 inline_keyboard.append([
                     InlineKeyboardButton(
                         text=button_text,
-                        callback_data=btn["callback_data"]
+                        callback_data=_truncate_callback_data(btn["callback_data"])
                     )
                 ])
         
@@ -167,7 +183,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 parent_button = await get_button_by_id(button["parent_id"])
                 if parent_button:
                     admin_keyboard.append([
-                        InlineKeyboardButton(text="◀️ Назад", callback_data=parent_button["callback_data"])
+                        InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(parent_button["callback_data"]))
                     ])
             else:
                 admin_keyboard.append([
@@ -268,7 +284,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                     parent_button = await get_button_by_id(button["parent_id"])
                     if parent_button:
                         admin_keyboard.append([
-                            InlineKeyboardButton(text="◀️ Назад", callback_data=parent_button["callback_data"])
+                            InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(parent_button["callback_data"]))
                         ])
                 else:
                     admin_keyboard.append([
