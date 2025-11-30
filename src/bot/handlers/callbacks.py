@@ -50,19 +50,32 @@ def _truncate_callback_data(callback_data: str) -> str:
     return result
 
 
-def _validate_keyboard(keyboard: InlineKeyboardMarkup) -> bool:
-    """Проверяет, что все callback_data в клавиатуре валидны."""
+def _validate_keyboard(keyboard: InlineKeyboardMarkup) -> tuple[bool, list[str]]:
+    """Проверяет, что все callback_data в клавиатуре валидны. Возвращает (валидна ли клавиатура, список проблемных callback_data)."""
     import logging
     logger = logging.getLogger(__name__)
     
+    problems = []
     for row in keyboard.inline_keyboard:
         for button in row:
             if button.callback_data:
                 byte_length = len(button.callback_data.encode('utf-8'))
                 if byte_length > MAX_CALLBACK_DATA_LENGTH:
-                    logger.error(f"Найден невалидный callback_data в клавиатуре: длина={byte_length} байт, данные={button.callback_data[:50]}...")
-                    return False
-    return True
+                    problem_msg = f"длина={byte_length} байт, данные={button.callback_data[:50]}..."
+                    logger.error(f"Найден невалидный callback_data в клавиатуре: {problem_msg}")
+                    problems.append(problem_msg)
+                    # Автоматически обрезаем проблемный callback_data
+                    button.callback_data = _truncate_callback_data(button.callback_data)
+                    # Проверяем еще раз после обрезки
+                    new_byte_length = len(button.callback_data.encode('utf-8'))
+                    if new_byte_length > MAX_CALLBACK_DATA_LENGTH:
+                        # Если все еще слишком длинный, заменяем на безопасный вариант
+                        import hashlib
+                        hash_suffix = hashlib.md5(button.callback_data.encode('utf-8')).hexdigest()[:16]
+                        button.callback_data = f"btn_{hash_suffix}"
+                        logger.warning(f"Заменен проблемный callback_data на: {button.callback_data}")
+    
+    return len(problems) == 0, problems
 
 
 def _is_admin(user_id: int) -> bool:
@@ -237,13 +250,12 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
             
             admin_kb = InlineKeyboardMarkup(inline_keyboard=admin_keyboard)
             
-            # Валидируем клавиатуру перед отправкой
-            if not _validate_keyboard(admin_kb):
+            # Валидируем и исправляем клавиатуру перед отправкой
+            is_valid, problems = _validate_keyboard(admin_kb)
+            if problems:
                 import logging
                 logger = logging.getLogger(__name__)
-                logger.error("Обнаружена невалидная клавиатура, пропускаем отправку")
-                await callback.answer("Ошибка: невалидные данные кнопок", show_alert=True)
-                return
+                logger.warning(f"Обнаружены проблемные callback_data, исправлены: {problems}")
             
             try:
                 await callback.message.answer(

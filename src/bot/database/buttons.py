@@ -46,6 +46,26 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
         return button_id
 
 
+def _ensure_short_callback_data(callback_data: str, button_id: int) -> str:
+    """Обеспечивает, что callback_data короткий. Если нет - создает на основе ID."""
+    MAX_CALLBACK_DATA_LENGTH = 64
+    
+    if not callback_data:
+        return f"btn_id_{button_id}"
+    
+    # Если уже в формате btn_id_XXX, возвращаем как есть
+    if callback_data.startswith("btn_id_"):
+        return callback_data
+    
+    # Проверяем длину
+    byte_length = len(callback_data.encode('utf-8'))
+    if byte_length <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    
+    # Если слишком длинный, создаем на основе ID
+    return f"btn_id_{button_id}"
+
+
 async def get_all_buttons(parent_id: Optional[int] = None) -> List[dict]:
     """Получить все кнопки из БД. Если указан parent_id, возвращает только дочерние кнопки."""
     pool = get_db_pool()
@@ -59,7 +79,26 @@ async def get_all_buttons(parent_id: Optional[int] = None) -> List[dict]:
             rows = await conn.fetch(
                 "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE parent_id IS NULL ORDER BY id"
             )
-        return [dict(row) for row in rows]
+        
+        buttons = []
+        for row in rows:
+            button_dict = dict(row)
+            # Обеспечиваем, что callback_data короткий
+            original_callback = button_dict["callback_data"]
+            short_callback = _ensure_short_callback_data(original_callback, button_dict["id"])
+            
+            # Если callback_data был изменен, обновляем в базе
+            if short_callback != original_callback:
+                await conn.execute(
+                    "UPDATE buttons SET callback_data = $1 WHERE id = $2",
+                    short_callback,
+                    button_dict["id"]
+                )
+                button_dict["callback_data"] = short_callback
+            
+            buttons.append(button_dict)
+        
+        return buttons
 
 
 async def get_button_by_id(button_id: int) -> Optional[dict]:
@@ -70,18 +109,65 @@ async def get_button_by_id(button_id: int) -> Optional[dict]:
             "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE id = $1",
             button_id
         )
-        return dict(row) if row else None
+        if not row:
+            return None
+        
+        button_dict = dict(row)
+        # Обеспечиваем, что callback_data короткий
+        original_callback = button_dict["callback_data"]
+        short_callback = _ensure_short_callback_data(original_callback, button_id)
+        
+        # Если callback_data был изменен, обновляем в базе
+        if short_callback != original_callback:
+            await conn.execute(
+                "UPDATE buttons SET callback_data = $1 WHERE id = $2",
+                short_callback,
+                button_id
+            )
+            button_dict["callback_data"] = short_callback
+        
+        return button_dict
 
 
 async def get_button_by_callback_data(callback_data: str) -> Optional[dict]:
     """Получить кнопку по callback_data."""
     pool = get_db_pool()
     async with pool.acquire() as conn:
+        # Сначала пытаемся найти по точному совпадению
         row = await conn.fetchrow(
             "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE callback_data = $1",
             callback_data
         )
-        return dict(row) if row else None
+        
+        # Если не найдено и callback_data в формате btn_id_XXX, извлекаем ID
+        if not row and callback_data.startswith("btn_id_"):
+            try:
+                button_id = int(callback_data.replace("btn_id_", ""))
+                row = await conn.fetchrow(
+                    "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE id = $1",
+                    button_id
+                )
+            except (ValueError, AttributeError):
+                pass
+        
+        if not row:
+            return None
+        
+        button_dict = dict(row)
+        # Обеспечиваем, что callback_data короткий
+        original_callback = button_dict["callback_data"]
+        short_callback = _ensure_short_callback_data(original_callback, button_dict["id"])
+        
+        # Если callback_data был изменен, обновляем в базе
+        if short_callback != original_callback:
+            await conn.execute(
+                "UPDATE buttons SET callback_data = $1 WHERE id = $2",
+                short_callback,
+                button_dict["id"]
+            )
+            button_dict["callback_data"] = short_callback
+        
+        return button_dict
 
 
 async def update_button_text(button_id: int, new_text: str) -> bool:
