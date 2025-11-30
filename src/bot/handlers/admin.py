@@ -2358,15 +2358,28 @@ async def edit_step_handler(callback: CallbackQuery, state: FSMContext) -> None:
                     caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
                     await callback.message.answer_document(document=file_id, caption=caption)
             except TelegramBadRequest as e:
-                logging.error(f"Ошибка при отправке файла (просмотр шага {step_number}): {e}. file_id={file_id}, file_type={file_type}")
+                error_message = str(e)
+                logging.error(f"[TelegramBadRequest] Ошибка при отправке файла (просмотр шага {step_number}): {e}. file_id={file_id}, file_type={file_type}")
                 # Отправляем сообщение об ошибке с текстом, если он есть
-                error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nНе удалось отправить файл (файл больше не доступен)."
+                if "wrong file identifier" in error_message.lower() or "file identifier" in error_message.lower():
+                    error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nНе удалось отправить файл (файл больше не доступен).\n\nВы можете изменить файл, нажав кнопку \"✏️ Изменить текст\"."
+                else:
+                    error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nОшибка при отправке файла: {error_message}"
                 if content_text:
                     error_msg += f"\n\n{content_text}"
                 await callback.message.answer(error_msg)
             except Exception as e:
-                logging.error(f"Error sending file step: {e}", exc_info=True)
-                error_msg = f"❌ Ошибка при отправке файла шага {step_number}: {e}"
+                error_type = type(e).__name__
+                logging.error(f"[Exception] Error sending file step (type={error_type}): {e}", exc_info=True)
+                # Если это TelegramBadRequest, но попал в общий обработчик, обрабатываем отдельно
+                if isinstance(e, TelegramBadRequest):
+                    error_message = str(e)
+                    if "wrong file identifier" in error_message.lower() or "file identifier" in error_message.lower():
+                        error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nНе удалось отправить файл (файл больше не доступен).\n\nВы можете изменить файл, нажав кнопку \"✏️ Изменить текст\"."
+                    else:
+                        error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nОшибка при отправке файла: {error_message}"
+                else:
+                    error_msg = f"❌ Ошибка при отправке файла шага {step_number}: {e}"
                 if content_text:
                     error_msg += f"\n\n{content_text}"
                 await callback.message.answer(error_msg)
