@@ -7,6 +7,7 @@ from src.bot.database.buttons import (
     delete_button,
     update_button_file,
     remove_button_file,
+    fix_long_callback_data,
 )
 from src.bot.database.start_message import get_start_message, update_start_message
 from src.bot.database.button_steps import (
@@ -36,5 +37,6 @@ __all__ = [
     "update_step_delay",
     "update_step_content",
     "insert_step_at_position",
+    "fix_long_callback_data",
 ]
 

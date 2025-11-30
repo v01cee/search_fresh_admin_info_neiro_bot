@@ -26,15 +26,26 @@ MAX_CALLBACK_DATA_LENGTH = 64
 
 def _truncate_callback_data(callback_data: str) -> str:
     """Обрезает callback_data до максимальной длины, если необходимо."""
-    if len(callback_data.encode('utf-8')) <= MAX_CALLBACK_DATA_LENGTH:
-        return callback_data
-    # Обрезаем по байтам, а не по символам
+    if not callback_data:
+        return "btn_invalid"
+    
     encoded = callback_data.encode('utf-8')
-    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH]
-    # Убеждаемся, что не обрезали в середине UTF-8 символа
+    if len(encoded) <= MAX_CALLBACK_DATA_LENGTH:
+        return callback_data
+    
+    truncated = encoded[:MAX_CALLBACK_DATA_LENGTH - 1]
     while truncated and truncated[-1] & 0b11000000 == 0b10000000:
         truncated = truncated[:-1]
-    return truncated.decode('utf-8', errors='ignore')
+        if not truncated:
+            break
+    
+    result = truncated.decode('utf-8', errors='ignore')
+    if not result or len(result.encode('utf-8')) == 0:
+        import hashlib
+        hash_suffix = hashlib.md5(callback_data.encode('utf-8')).hexdigest()[:16]
+        return f"btn_{hash_suffix}"
+    
+    return result
 
 
 async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:

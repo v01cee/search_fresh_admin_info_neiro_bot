@@ -8,6 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from .config import get_config
 from .database import init_db, close_db
+from .database.buttons import fix_long_callback_data
 from .handlers.start import start_router
 from .handlers.admin import admin_router
 from .handlers.callbacks import callback_router
@@ -26,6 +27,13 @@ async def main() -> None:
     # Инициализация БД
     await init_db()
     logging.info("База данных подключена.")
+    
+    # Исправляем длинные callback_data в базе данных
+    try:
+        await fix_long_callback_data()
+        logging.info("Проверка и исправление callback_data завершена.")
+    except Exception as e:
+        logging.warning(f"Ошибка при исправлении callback_data: {e}")
 
     # Регистрация обработчика закрытия БД
     atexit.register(lambda: __import__("asyncio").run(close_db()))
