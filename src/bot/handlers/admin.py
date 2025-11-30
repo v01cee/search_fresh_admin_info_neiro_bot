@@ -2307,66 +2307,76 @@ async def edit_step_handler(callback: CallbackQuery, state: FSMContext) -> None:
         
         logging.info(f"Sending step content: content_type={content_type}, file_type={file_type}, has_file_id={bool(file_id)}, has_content_text={bool(content_text)}")
         
-        try:
-            # Отправляем содержимое шага
-            if content_type == "text" and content_text:
-                logging.info("Sending text step")
+        # Отправляем содержимое шага
+        if content_type == "text" and content_text:
+            logging.info("Sending text step")
+            try:
                 await callback.message.answer(f"📝 <b>Шаг {step_number}</b>\n\n{content_text}")
-            elif content_type == "file" and file_id:
-                logging.info(f"Sending file step: file_type={file_type}")
-                try:
-                    if file_type == "photo":
-                        # Telegram ограничивает caption до 1024 символов
-                        MAX_CAPTION_LENGTH = 1024
-                        step_header = f"📎 <b>Шаг {step_number}</b>"
-                        text_to_send_separately = None
-                        
-                        if content_text:
-                            full_caption = f"{step_header}\n\n{content_text}"
-                            if len(full_caption) <= MAX_CAPTION_LENGTH:
-                                caption = full_caption
-                            else:
-                                # Если текст длиннее, отправляем заголовок с файлом, а текст отдельным сообщением
-                                caption = step_header
-                                text_to_send_separately = content_text
-                        else:
-                            caption = step_header
-                        
-                        logging.info(f"Sending photo with caption length: {len(caption)}")
-                        await callback.message.answer_photo(photo=file_id, caption=caption)
-                        if text_to_send_separately:
-                            await callback.message.answer(text_to_send_separately)
-                    elif file_type == "video":
-                        caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
-                        await callback.message.answer_video(video=file_id, caption=caption)
-                    elif file_type == "document":
-                        caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
-                        await callback.message.answer_document(document=file_id, caption=caption)
-                    elif file_type == "audio":
-                        caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
-                        await callback.message.answer_audio(audio=file_id, caption=caption)
-                    elif file_type == "voice":
-                        caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
-                        await callback.message.answer_voice(voice=file_id, caption=caption)
-                    elif file_type == "video_note":
-                        await callback.message.answer_video_note(video_note=file_id)
-                        await callback.message.answer(f"📎 <b>Шаг {step_number}</b>")
-                    else:
-                        caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
-                        await callback.message.answer_document(document=file_id, caption=caption)
-                except TelegramBadRequest as e:
-                    logging.error(f"Ошибка при отправке файла (просмотр шага {step_number}): {e}. file_id={file_id}, file_type={file_type}")
-                    # Отправляем сообщение об ошибке с текстом, если он есть
-                    error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nНе удалось отправить файл (файл больше не доступен)."
+            except Exception as e:
+                logging.error(f"Error sending text step: {e}", exc_info=True)
+                await callback.message.answer(f"❌ Ошибка при отправке текста шага: {e}")
+        elif content_type == "file" and file_id:
+            logging.info(f"Sending file step: file_type={file_type}")
+            try:
+                if file_type == "photo":
+                    # Telegram ограничивает caption до 1024 символов
+                    MAX_CAPTION_LENGTH = 1024
+                    step_header = f"📎 <b>Шаг {step_number}</b>"
+                    text_to_send_separately = None
+                    
                     if content_text:
-                        error_msg += f"\n\n{content_text}"
-                    await callback.message.answer(error_msg)
-            else:
-                logging.info("Sending empty step message")
+                        full_caption = f"{step_header}\n\n{content_text}"
+                        if len(full_caption) <= MAX_CAPTION_LENGTH:
+                            caption = full_caption
+                        else:
+                            # Если текст длиннее, отправляем заголовок с файлом, а текст отдельным сообщением
+                            caption = step_header
+                            text_to_send_separately = content_text
+                    else:
+                        caption = step_header
+                    
+                    logging.info(f"Sending photo with caption length: {len(caption)}")
+                    await callback.message.answer_photo(photo=file_id, caption=caption)
+                    if text_to_send_separately:
+                        await callback.message.answer(text_to_send_separately)
+                elif file_type == "video":
+                    caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
+                    await callback.message.answer_video(video=file_id, caption=caption)
+                elif file_type == "document":
+                    caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
+                    await callback.message.answer_document(document=file_id, caption=caption)
+                elif file_type == "audio":
+                    caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
+                    await callback.message.answer_audio(audio=file_id, caption=caption)
+                elif file_type == "voice":
+                    caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
+                    await callback.message.answer_voice(voice=file_id, caption=caption)
+                elif file_type == "video_note":
+                    await callback.message.answer_video_note(video_note=file_id)
+                    await callback.message.answer(f"📎 <b>Шаг {step_number}</b>")
+                else:
+                    caption = f"📎 <b>Шаг {step_number}</b>\n\n{content_text}" if content_text else f"📎 <b>Шаг {step_number}</b>"
+                    await callback.message.answer_document(document=file_id, caption=caption)
+            except TelegramBadRequest as e:
+                logging.error(f"Ошибка при отправке файла (просмотр шага {step_number}): {e}. file_id={file_id}, file_type={file_type}")
+                # Отправляем сообщение об ошибке с текстом, если он есть
+                error_msg = f"⚠️ <b>Шаг {step_number}</b>\n\nНе удалось отправить файл (файл больше не доступен)."
+                if content_text:
+                    error_msg += f"\n\n{content_text}"
+                await callback.message.answer(error_msg)
+            except Exception as e:
+                logging.error(f"Error sending file step: {e}", exc_info=True)
+                error_msg = f"❌ Ошибка при отправке файла шага {step_number}: {e}"
+                if content_text:
+                    error_msg += f"\n\n{content_text}"
+                await callback.message.answer(error_msg)
+        else:
+            logging.info("Sending empty step message")
+            try:
                 await callback.message.answer(f"📝 <b>Шаг {step_number}</b>\n\n(Пустой шаг)")
-        except Exception as e:
-            logging.error(f"Error sending step content: {e}", exc_info=True)
-            await callback.message.answer(f"❌ Ошибка при отправке содержимого шага: {e}")
+            except Exception as e:
+                logging.error(f"Error sending empty step message: {e}", exc_info=True)
+                await callback.message.answer(f"❌ Ошибка при отправке сообщения о пустом шаге: {e}")
         
         # Формируем клавиатуру
         inline_keyboard = []
