@@ -212,18 +212,28 @@ async def fix_long_callback_data() -> None:
         
         return result
     
+    import logging
+    logger = logging.getLogger(__name__)
+    
     pool = get_db_pool()
     async with pool.acquire() as conn:
         # Получаем все кнопки и проверяем длину callback_data в байтах
         rows = await conn.fetch("SELECT id, callback_data FROM buttons")
+        logger.info(f"Проверка callback_data: найдено {len(rows)} кнопок")
         
         # Фильтруем только те, у которых callback_data превышает 64 байта
         long_callbacks = []
         for row in rows:
             callback_data = row["callback_data"]
-            if callback_data and len(callback_data.encode('utf-8')) > MAX_CALLBACK_DATA_LENGTH:
-                long_callbacks.append(row)
+            if callback_data:
+                byte_length = len(callback_data.encode('utf-8'))
+                if byte_length > MAX_CALLBACK_DATA_LENGTH:
+                    long_callbacks.append(row)
+                    logger.warning(f"Найдена кнопка с длинным callback_data: ID={row['id']}, длина={byte_length} байт")
         
+        logger.info(f"Найдено {len(long_callbacks)} кнопок с длинным callback_data")
+        
+        fixed_count = 0
         for row in long_callbacks:
             old_callback = row["callback_data"]
             new_callback = truncate_callback_data(old_callback)
@@ -264,4 +274,8 @@ async def fix_long_callback_data() -> None:
                     new_callback,
                     row["id"]
                 )
+                fixed_count += 1
+                logger.info(f"Исправлен callback_data для кнопки ID={row['id']}: {len(old_callback.encode('utf-8'))} -> {len(new_callback.encode('utf-8'))} байт")
+        
+        logger.info(f"Исправлено {fixed_count} кнопок с длинным callback_data")
 

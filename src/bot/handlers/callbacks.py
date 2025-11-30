@@ -46,6 +46,21 @@ def _truncate_callback_data(callback_data: str) -> str:
     return result
 
 
+def _validate_keyboard(keyboard: InlineKeyboardMarkup) -> bool:
+    """Проверяет, что все callback_data в клавиатуре валидны."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    for row in keyboard.inline_keyboard:
+        for button in row:
+            if button.callback_data:
+                byte_length = len(button.callback_data.encode('utf-8'))
+                if byte_length > MAX_CALLBACK_DATA_LENGTH:
+                    logger.error(f"Найден невалидный callback_data в клавиатуре: длина={byte_length} байт, данные={button.callback_data[:50]}...")
+                    return False
+    return True
+
+
 def _is_admin(user_id: int) -> bool:
     config = get_config()
     return user_id in config.admin_ids
@@ -138,7 +153,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 inline_keyboard.append([
                     InlineKeyboardButton(
                         text="◀️ Назад",
-                        callback_data=parent_button["callback_data"]
+                        callback_data=_truncate_callback_data(parent_button["callback_data"])
                     )
                 ])
         else:
@@ -177,7 +192,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                     if delay and delay > 0:
                         button_text = f"{button_text} ✓ ({delay} сек)"
                     admin_keyboard.append([
-                        InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
+                        InlineKeyboardButton(text=button_text, callback_data=_truncate_callback_data(btn["callback_data"]))
                     ])
             
             # Кнопка "Редактировать шаги"
@@ -209,11 +224,26 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 ])
             
             admin_kb = InlineKeyboardMarkup(inline_keyboard=admin_keyboard)
-            await callback.message.answer(
-                f"Кнопка: <b>{button['text']}</b>\n"
-                f"Количество шагов: {len(steps)}",
-                reply_markup=admin_kb
-            )
+            
+            # Валидируем клавиатуру перед отправкой
+            if not _validate_keyboard(admin_kb):
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error("Обнаружена невалидная клавиатура, пропускаем отправку")
+                await callback.answer("Ошибка: невалидные данные кнопок", show_alert=True)
+                return
+            
+            try:
+                await callback.message.answer(
+                    f"Кнопка: <b>{button['text']}</b>\n"
+                    f"Количество шагов: {len(steps)}",
+                    reply_markup=admin_kb
+                )
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Ошибка при отправке клавиатуры: {e}")
+                await callback.answer("Ошибка при отображении меню", show_alert=True)
         elif steps:
             # Если есть шаги и пользователь не админ (или админ не в админском режиме) - отправляем все шаги
             for i, step in enumerate(steps):
@@ -278,7 +308,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                         if delay and delay > 0:
                             button_text = f"{button_text} ✓ ({delay} сек)"
                         admin_keyboard.append([
-                            InlineKeyboardButton(text=button_text, callback_data=btn["callback_data"])
+                            InlineKeyboardButton(text=button_text, callback_data=_truncate_callback_data(btn["callback_data"]))
                         ])
                 
                 # Кнопка "Редактировать шаги"
