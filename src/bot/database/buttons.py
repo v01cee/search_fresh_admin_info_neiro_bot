@@ -7,19 +7,6 @@ from src.bot.database.db import get_db_pool
 async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int] = None, delay: int = 0) -> int:
     """Добавить новую кнопку в БД. Возвращает ID созданной кнопки."""
     pool = get_db_pool()
-    # Генерируем callback_data из текста (упрощённо, можно улучшить)
-    # Telegram ограничивает callback_data до 64 байт
-    MAX_CALLBACK_DATA_LENGTH = 64
-    
-    # Создаем базовый callback_data из текста
-    base_callback = f"btn_{text.lower().replace(' ', '_')}"
-    
-    # Если есть parent_id, добавляем его к callback_data для уникальности
-    if parent_id:
-        base_callback = f"{base_callback}_p{parent_id}"
-    
-    # Обрезаем до максимальной длины, оставляя место для суффикса при необходимости
-    callback_data = base_callback[:MAX_CALLBACK_DATA_LENGTH - 10]  # Оставляем место для суффикса
     
     async with pool.acquire() as conn:
         # Проверяем, нет ли уже такой кнопки с таким же parent_id
@@ -31,32 +18,32 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
         if existing:
             return existing["id"]
         
-        # Если callback_data уже занят, добавляем суффикс
-        counter = 1
-        original_callback = callback_data
-        while await conn.fetchrow("SELECT id FROM buttons WHERE callback_data = $1", callback_data):
-            suffix = f"_{counter}"
-            # Обрезаем callback_data, чтобы поместился суффикс
-            max_base_length = MAX_CALLBACK_DATA_LENGTH - len(suffix)
-            callback_data = f"{original_callback[:max_base_length]}{suffix}"
-            counter += 1
-            # Защита от бесконечного цикла
-            if counter > 1000:
-                # Если не удалось найти уникальный callback_data, используем хеш
-                import hashlib
-                hash_suffix = hashlib.md5(f"{text}_{parent_id}_{counter}".encode()).hexdigest()[:8]
-                callback_data = f"btn_{hash_suffix}"
-                break
+        # Сначала создаем кнопку с временным callback_data
+        # Используем ID для создания короткого callback_data после создания
+        temp_callback = "btn_temp"
         
         row = await conn.fetchrow(
             "INSERT INTO buttons (text, callback_data, message_text, parent_id, delay) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             text,
-            callback_data,
+            temp_callback,
             message_text,
             parent_id,
             delay
         )
-        return row["id"]
+        button_id = row["id"]
+        
+        # Теперь создаем короткий callback_data на основе ID
+        # Используем формат btn_id_123, который всегда короткий
+        callback_data = f"btn_id_{button_id}"
+        
+        # Обновляем callback_data на основе ID
+        await conn.execute(
+            "UPDATE buttons SET callback_data = $1 WHERE id = $2",
+            callback_data,
+            button_id
+        )
+        
+        return button_id
 
 
 async def get_all_buttons(parent_id: Optional[int] = None) -> List[dict]:
@@ -186,96 +173,62 @@ async def update_button_delay(button_id: int, delay: int) -> bool:
 
 
 async def fix_long_callback_data() -> None:
-    """Исправляет все callback_data, которые превышают 64 байта."""
-    MAX_CALLBACK_DATA_LENGTH = 64
-    
-    def truncate_callback_data(callback_data: str) -> str:
-        """Обрезает callback_data до максимальной длины."""
-        if not callback_data:
-            return "btn_invalid"
-        
-        encoded = callback_data.encode('utf-8')
-        if len(encoded) <= MAX_CALLBACK_DATA_LENGTH:
-            return callback_data
-        
-        truncated = encoded[:MAX_CALLBACK_DATA_LENGTH - 1]
-        while truncated and truncated[-1] & 0b11000000 == 0b10000000:
-            truncated = truncated[:-1]
-            if not truncated:
-                break
-        
-        result = truncated.decode('utf-8', errors='ignore')
-        if not result or len(result.encode('utf-8')) == 0:
-            import hashlib
-            hash_suffix = hashlib.md5(callback_data.encode('utf-8')).hexdigest()[:16]
-            return f"btn_{hash_suffix}"
-        
-        return result
-    
+    """Исправляет все callback_data, пересоздавая их на основе ID кнопок."""
     import logging
     logger = logging.getLogger(__name__)
     
+    MAX_CALLBACK_DATA_LENGTH = 64
+    
     pool = get_db_pool()
     async with pool.acquire() as conn:
-        # Получаем все кнопки и проверяем длину callback_data в байтах
+        # Получаем все кнопки
         rows = await conn.fetch("SELECT id, callback_data FROM buttons")
         logger.info(f"Проверка callback_data: найдено {len(rows)} кнопок")
         
-        # Фильтруем только те, у которых callback_data превышает 64 байта
-        long_callbacks = []
+        # Фильтруем кнопки, которые нужно исправить
+        # Исправляем все кнопки, у которых callback_data не начинается с btn_id_ или превышает 64 байта
+        to_fix = []
         for row in rows:
             callback_data = row["callback_data"]
-            if callback_data:
-                byte_length = len(callback_data.encode('utf-8'))
-                if byte_length > MAX_CALLBACK_DATA_LENGTH:
-                    long_callbacks.append(row)
-                    logger.warning(f"Найдена кнопка с длинным callback_data: ID={row['id']}, длина={byte_length} байт")
+            if not callback_data:
+                to_fix.append(row)
+            elif not callback_data.startswith("btn_id_"):
+                # Если callback_data не на основе ID, исправляем
+                to_fix.append(row)
+            elif len(callback_data.encode('utf-8')) > MAX_CALLBACK_DATA_LENGTH:
+                # Если даже btn_id_XXX слишком длинный (маловероятно, но на всякий случай)
+                to_fix.append(row)
         
-        logger.info(f"Найдено {len(long_callbacks)} кнопок с длинным callback_data")
+        logger.info(f"Найдено {len(to_fix)} кнопок для исправления")
         
         fixed_count = 0
-        for row in long_callbacks:
+        for row in to_fix:
+            button_id = row["id"]
             old_callback = row["callback_data"]
-            new_callback = truncate_callback_data(old_callback)
             
-            if new_callback != old_callback:
-                # Проверяем, нет ли уже кнопки с таким callback_data
-                existing = await conn.fetchrow(
-                    "SELECT id FROM buttons WHERE callback_data = $1 AND id != $2",
-                    new_callback,
-                    row["id"]
-                )
-                
-                if existing:
-                    # Если уже есть, добавляем суффикс
-                    counter = 1
-                    while True:
-                        test_callback = f"{new_callback[:MAX_CALLBACK_DATA_LENGTH - 10]}_{counter}"
-                        test_callback = truncate_callback_data(test_callback)
-                        existing = await conn.fetchrow(
-                            "SELECT id FROM buttons WHERE callback_data = $1 AND id != $2",
-                            test_callback,
-                            row["id"]
-                        )
-                        if not existing:
-                            new_callback = test_callback
-                            break
-                        counter += 1
-                        if counter > 1000:
-                            # Используем хеш
-                            import hashlib
-                            hash_suffix = hashlib.md5(f"{old_callback}_{row['id']}".encode('utf-8')).hexdigest()[:16]
-                            new_callback = f"btn_{hash_suffix}"
-                            break
-                
-                # Обновляем callback_data
-                await conn.execute(
-                    "UPDATE buttons SET callback_data = $1 WHERE id = $2",
-                    new_callback,
-                    row["id"]
-                )
-                fixed_count += 1
-                logger.info(f"Исправлен callback_data для кнопки ID={row['id']}: {len(old_callback.encode('utf-8'))} -> {len(new_callback.encode('utf-8'))} байт")
+            # Создаем новый callback_data на основе ID
+            new_callback = f"btn_id_{button_id}"
+            
+            # Проверяем, что новый callback_data не превышает лимит (маловероятно для btn_id_XXX)
+            if len(new_callback.encode('utf-8')) > MAX_CALLBACK_DATA_LENGTH:
+                # Если ID слишком большой, используем хеш
+                import hashlib
+                hash_suffix = hashlib.md5(str(button_id).encode('utf-8')).hexdigest()[:16]
+                new_callback = f"btn_{hash_suffix}"
+            
+            # Обновляем callback_data
+            await conn.execute(
+                "UPDATE buttons SET callback_data = $1 WHERE id = $2",
+                new_callback,
+                button_id
+            )
+            fixed_count += 1
+            if old_callback:
+                old_len = len(old_callback.encode('utf-8'))
+                new_len = len(new_callback.encode('utf-8'))
+                logger.info(f"Исправлен callback_data для кнопки ID={button_id}: {old_len} -> {new_len} байт")
+            else:
+                logger.info(f"Создан callback_data для кнопки ID={button_id}: {len(new_callback.encode('utf-8'))} байт")
         
-        logger.info(f"Исправлено {fixed_count} кнопок с длинным callback_data")
+        logger.info(f"Исправлено {fixed_count} кнопок")
 

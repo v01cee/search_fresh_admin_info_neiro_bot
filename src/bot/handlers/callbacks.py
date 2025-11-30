@@ -20,6 +20,10 @@ def _truncate_callback_data(callback_data: str) -> str:
     if not callback_data:
         return "btn_invalid"
     
+    # Если callback_data уже в формате btn_id_XXX, он всегда короткий, не обрезаем
+    if callback_data.startswith("btn_id_"):
+        return callback_data
+    
     # Проверяем длину в байтах
     encoded = callback_data.encode('utf-8')
     if len(encoded) <= MAX_CALLBACK_DATA_LENGTH:
@@ -73,6 +77,14 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
 
     # Получаем информацию о кнопке из БД
     button = await get_button_by_callback_data(callback_data)
+    
+    # Если кнопка не найдена, но callback_data в формате btn_id_XXX, извлекаем ID
+    if not button and callback_data.startswith("btn_id_"):
+        try:
+            button_id = int(callback_data.replace("btn_id_", ""))
+            button = await get_button_by_id(button_id)
+        except (ValueError, AttributeError):
+            pass
 
     if button:
         await callback.answer(f"Вы нажали: {button['text']}")

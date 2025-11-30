@@ -29,6 +29,10 @@ def _truncate_callback_data(callback_data: str) -> str:
     if not callback_data:
         return "btn_invalid"
     
+    # Если callback_data уже в формате btn_id_XXX, он всегда короткий, не обрезаем
+    if callback_data.startswith("btn_id_"):
+        return callback_data
+    
     encoded = callback_data.encode('utf-8')
     if len(encoded) <= MAX_CALLBACK_DATA_LENGTH:
         return callback_data
