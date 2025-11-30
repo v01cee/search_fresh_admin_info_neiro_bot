@@ -1,6 +1,8 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
+import logging
 
 from src.bot.config import get_config
 from src.bot.database.buttons import get_all_buttons, get_button_by_callback_data, get_button_by_id
@@ -8,6 +10,8 @@ from src.bot.database.start_message import get_start_message
 from src.bot.database.button_steps import get_button_steps
 import asyncio
 from src.bot.services.menu_constructor import build_user_inline_keyboard, build_admin_inline_keyboard_with_user_buttons
+
+logger = logging.getLogger(__name__)
 
 callback_router = Router(name="callbacks")
 
@@ -269,58 +273,8 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 logger.error(f"Ошибка при отправке клавиатуры: {e}")
                 await callback.answer("Ошибка при отображении меню", show_alert=True)
         elif steps:
-            # Если есть шаги и пользователь не админ (или админ не в админском режиме) - отправляем все шаги
-            for i, step in enumerate(steps):
-                # Если это не первый шаг и есть задержка - ждем
-                if i > 0 and step.get("delay", 0) > 0:
-                    await asyncio.sleep(step["delay"])
-                
-                content_type = step.get("content_type")
-                content_text = step.get("content_text", "")
-                file_id = step.get("file_id")
-                file_type = step.get("file_type")
-                
-                if content_type == "text":
-                    # Отправляем текст
-                    if content_text:
-                        await callback.message.answer(content_text)
-                elif content_type == "file" and file_id:
-                    # Telegram ограничивает caption до 1024 символов
-                    MAX_CAPTION_LENGTH = 1024
-                    caption = None
-                    text_to_send_separately = None
-                    
-                    if content_text:
-                        if len(content_text) <= MAX_CAPTION_LENGTH:
-                            caption = content_text
-                        else:
-                            # Если текст длиннее, отправляем его отдельным сообщением
-                            text_to_send_separately = content_text
-                    
-                    # Отправляем файл в зависимости от типа
-                    if file_type == "photo":
-                        await callback.message.answer_photo(photo=file_id, caption=caption)
-                    elif file_type == "video":
-                        await callback.message.answer_video(video=file_id, caption=caption)
-                    elif file_type == "document":
-                        await callback.message.answer_document(document=file_id, caption=caption)
-                    elif file_type == "audio":
-                        await callback.message.answer_audio(audio=file_id, caption=caption)
-                    elif file_type == "voice":
-                        await callback.message.answer_voice(voice=file_id, caption=caption)
-                    elif file_type == "video_note":
-                        await callback.message.answer_video_note(video_note=file_id)
-                    else:
-                        # По умолчанию отправляем как документ
-                        await callback.message.answer_document(document=file_id, caption=caption)
-                    
-                    # Если текст был слишком длинным, отправляем его отдельным сообщением
-                    if text_to_send_separately:
-                        await callback.message.answer(text_to_send_separately)
-            
-            # После отправки всех шагов показываем клавиатуру
-            # Если пользователь админ - ВСЕГДА показываем админскую клавиатуру
-            # (admin_mode уже проверен и установлен выше, но проверяем is_admin_user для надежности)
+            # Строим клавиатуру заранее, чтобы прикрепить к последнему шагу
+            final_keyboard = None
             if is_admin_user:
                 admin_keyboard = []
                 
@@ -363,10 +317,96 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                         InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")
                     ])
                 
-                admin_kb = InlineKeyboardMarkup(inline_keyboard=admin_keyboard)
-                await callback.message.answer("◀️ Назад в меню", reply_markup=admin_kb)
+                final_keyboard = InlineKeyboardMarkup(inline_keyboard=admin_keyboard)
             else:
-                await callback.message.answer("◀️ Назад в меню", reply_markup=kb)
+                # Для обычных пользователей используем клавиатуру с дочерними кнопками
+                final_keyboard = kb
+            
+            # Если есть шаги и пользователь не админ (или админ не в админском режиме) - отправляем все шаги
+            for i, step in enumerate(steps):
+                # Если это не первый шаг и есть задержка - ждем
+                if i > 0 and step.get("delay", 0) > 0:
+                    await asyncio.sleep(step["delay"])
+                
+                content_type = step.get("content_type")
+                content_text = step.get("content_text", "")
+                file_id = step.get("file_id")
+                file_type = step.get("file_type")
+                
+                # Определяем, это последний шаг?
+                is_last_step = (i == len(steps) - 1)
+                
+                if content_type == "text":
+                    # Отправляем текст
+                    if content_text:
+                        # Если это последний шаг, прикрепляем клавиатуру
+                        if is_last_step and final_keyboard:
+                            await callback.message.answer(content_text, reply_markup=final_keyboard)
+                        else:
+                            await callback.message.answer(content_text)
+                elif content_type == "file" and file_id:
+                    # Telegram ограничивает caption до 1024 символов
+                    MAX_CAPTION_LENGTH = 1024
+                    caption = None
+                    text_to_send_separately = None
+                    
+                    if content_text:
+                        if len(content_text) <= MAX_CAPTION_LENGTH:
+                            caption = content_text
+                        else:
+                            # Если текст длиннее, отправляем его отдельным сообщением
+                            text_to_send_separately = content_text
+                    
+                    # Отправляем файл в зависимости от типа
+                    # Если это последний шаг, прикрепляем клавиатуру
+                    reply_markup = final_keyboard if is_last_step else None
+                    
+                    try:
+                        if file_type == "photo":
+                            await callback.message.answer_photo(photo=file_id, caption=caption, reply_markup=reply_markup)
+                        elif file_type == "video":
+                            await callback.message.answer_video(video=file_id, caption=caption, reply_markup=reply_markup)
+                        elif file_type == "document":
+                            await callback.message.answer_document(document=file_id, caption=caption, reply_markup=reply_markup)
+                        elif file_type == "audio":
+                            await callback.message.answer_audio(audio=file_id, caption=caption, reply_markup=reply_markup)
+                        elif file_type == "voice":
+                            await callback.message.answer_voice(voice=file_id, caption=caption, reply_markup=reply_markup)
+                        elif file_type == "video_note":
+                            await callback.message.answer_video_note(video_note=file_id, reply_markup=reply_markup)
+                        else:
+                            # По умолчанию отправляем как документ
+                            await callback.message.answer_document(document=file_id, caption=caption, reply_markup=reply_markup)
+                        
+                        # Если текст был слишком длинным и должен был отправиться отдельно
+                        if text_to_send_separately:
+                            if is_last_step and final_keyboard:
+                                await callback.message.answer(text_to_send_separately, reply_markup=final_keyboard)
+                            else:
+                                await callback.message.answer(text_to_send_separately)
+                    except TelegramBadRequest as e:
+                        logger.error(f"Ошибка при отправке файла (шаг {i+1}): {e}. file_id={file_id}, file_type={file_type}")
+                        # Отправляем сообщение об ошибке
+                        error_msg = f"⚠️ Не удалось отправить файл (файл больше не доступен)."
+                        if caption:
+                            error_msg += f"\n\n{caption}"
+                        elif content_text:
+                            error_msg += f"\n\n{content_text}"
+                        
+                        if is_last_step and final_keyboard:
+                            await callback.message.answer(error_msg, reply_markup=final_keyboard)
+                        else:
+                            await callback.message.answer(error_msg)
+                        
+                        # Если текст был слишком длинным и должен был отправиться отдельно
+                        if text_to_send_separately:
+                            if is_last_step and final_keyboard:
+                                await callback.message.answer(text_to_send_separately, reply_markup=final_keyboard)
+                            else:
+                                await callback.message.answer(text_to_send_separately)
+                    
+            
+            # Клавиатура уже прикреплена к последнему шагу, больше ничего не отправляем
         else:
             # Если шагов нет, используем старую логику (для обратной совместимости)
             file_id = button.get("file_id")
@@ -375,21 +415,29 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
             
             if file_id:
                 # Отправляем файл в зависимости от типа
-                if file_type == "photo":
-                    await callback.message.answer_photo(photo=file_id, caption=message_text, reply_markup=kb)
-                elif file_type == "video":
-                    await callback.message.answer_video(video=file_id, caption=message_text, reply_markup=kb)
-                elif file_type == "document":
-                    await callback.message.answer_document(document=file_id, caption=message_text, reply_markup=kb)
-                elif file_type == "audio":
-                    await callback.message.answer_audio(audio=file_id, caption=message_text, reply_markup=kb)
-                elif file_type == "voice":
-                    await callback.message.answer_voice(voice=file_id, caption=message_text, reply_markup=kb)
-                elif file_type == "video_note":
-                    await callback.message.answer_video_note(video_note=file_id, reply_markup=kb)
-                else:
-                    # По умолчанию отправляем как документ
-                    await callback.message.answer_document(document=file_id, caption=message_text, reply_markup=kb)
+                try:
+                    if file_type == "photo":
+                        await callback.message.answer_photo(photo=file_id, caption=message_text, reply_markup=kb)
+                    elif file_type == "video":
+                        await callback.message.answer_video(video=file_id, caption=message_text, reply_markup=kb)
+                    elif file_type == "document":
+                        await callback.message.answer_document(document=file_id, caption=message_text, reply_markup=kb)
+                    elif file_type == "audio":
+                        await callback.message.answer_audio(audio=file_id, caption=message_text, reply_markup=kb)
+                    elif file_type == "voice":
+                        await callback.message.answer_voice(voice=file_id, caption=message_text, reply_markup=kb)
+                    elif file_type == "video_note":
+                        await callback.message.answer_video_note(video_note=file_id, reply_markup=kb)
+                    else:
+                        # По умолчанию отправляем как документ
+                        await callback.message.answer_document(document=file_id, caption=message_text, reply_markup=kb)
+                except TelegramBadRequest as e:
+                    logger.error(f"Ошибка при отправке файла (старая логика): {e}. file_id={file_id}, file_type={file_type}")
+                    # Отправляем сообщение об ошибке
+                    error_msg = f"⚠️ Не удалось отправить файл (файл больше не доступен)."
+                    if message_text:
+                        error_msg += f"\n\n{message_text}"
+                    await callback.message.answer(error_msg, reply_markup=kb)
             else:
                 # Показываем сохранённый текст сообщения или стартовое сообщение из БД
                 if not message_text:
