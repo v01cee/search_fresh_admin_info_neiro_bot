@@ -219,7 +219,14 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
                 InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")
             ])
         
-        message_text = f"Кнопка: <b>{button['text']}</b>\nКоличество шагов: {len(steps)}"
+        message_text = (
+            f"Кнопка: <b>{button['text']}</b> (ID: {button['id']})\n"
+            f"Количество шагов: {len(steps)}"
+        )
+        message_text = (
+            f"Кнопка: <b>{button['text']}</b> (ID: {button['id']})\n"
+            f"Количество шагов: {len(steps)}"
+        )
     else:
         # Обычная клавиатура с дочерними кнопками
         if child_buttons:
