@@ -19,6 +19,7 @@ class BotConfig:
     db_password: str
     deepseek_api_key: Optional[str]
     ai_service_url: str
+    group_id: Optional[int] = None
 
 
 def get_config() -> BotConfig:
@@ -74,6 +75,15 @@ def get_config() -> BotConfig:
     deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", DEFAULT_DEEPSEEK_API_KEY)
     ai_service_url = os.getenv("AI_SERVICE_URL", DEFAULT_AI_SERVICE_URL)
     
+    # Получаем group_id (опционально)
+    group_id_str = os.getenv("GROUP_ID")
+    group_id = None
+    if group_id_str:
+        try:
+            group_id = int(group_id_str.strip())
+        except ValueError:
+            group_id = None
+    
     return BotConfig(
         token=token,
         admin_ids=admin_ids,
@@ -85,6 +95,7 @@ def get_config() -> BotConfig:
         db_password=db_password,
         deepseek_api_key=deepseek_api_key,
         ai_service_url=ai_service_url,
+        group_id=group_id,
     )
 
 
