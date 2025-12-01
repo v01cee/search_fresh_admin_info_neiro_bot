@@ -167,3 +167,35 @@ async def search_execute(message: Message, state: FSMContext) -> None:
         await message.answer(f"❌ Ошибка при поиске: {e}")
         await _clear_state_preserving_admin(state, message.from_user.id)
 
+
+@search_router.message(F.text)
+async def search_from_free_text(message: Message, state: FSMContext) -> None:
+    """
+    Запуск поиска по любому текстовому сообщению.
+    Должен иметь самый низкий приоритет:
+    - НЕ срабатывает, если уже есть какое-то состояние FSM (админ/поиск/редактирование).
+    - НЕ срабатывает, если пользователь сейчас в чистом админ-режиме (admin_mode=True, user_mode=False).
+    - Игнорирует команды (сообщения, начинающиеся с '/').
+    Во всех остальных случаях просто прокидывает сообщение в стандартный search_execute.
+    """
+    # Не перехватываем, если уже есть активное состояние (админские стейты, поиск и т.п.)
+    current_state = await state.get_state()
+    if current_state:
+        return
+    
+    # Не трогаем сообщения в "чистом" админ-режиме
+    data = await state.get_data()
+    admin_mode = data.get("admin_mode", False)
+    user_mode = data.get("user_mode", False)
+    if admin_mode and not user_mode:
+        return
+    
+    # Не обрабатываем команды
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+    
+    # Ставим состояние поиска, чтобы другие роутеры (например, echo) не срабатывали параллельно
+    await state.set_state(SearchStates.waiting_for_search_query)
+    await search_execute(message, state)
+
