@@ -282,7 +282,7 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
             # Редактируем сообщение вместо отправки нового
             await _edit_or_send_message(
                 callback,
-                f"Кнопка: <b>{button['text']}</b>\n"
+                f"Кнопка: <b>{button['text']}</b> (ID: {button['id']})\n"
                 f"Количество шагов: {len(steps)}",
                 reply_markup=admin_kb
             )
