@@ -226,6 +226,9 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
                 InlineKeyboardButton(text="✏️ Изменить текст кнопки", callback_data=f"edit_button_name_{button['id']}")
             ])
             inline_keyboard.append([
+                InlineKeyboardButton(text="↕️ Сместить кнопку", callback_data=f"move_button_{button['id']}")
+            ])
+            inline_keyboard.append([
                 InlineKeyboardButton(text="✏️ Изменить текст", callback_data=f"edit_button_message_{button['id']}")
             ])
             # Кнопка для добавления/удаления файла
