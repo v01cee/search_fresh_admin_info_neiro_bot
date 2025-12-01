@@ -62,11 +62,10 @@ async def build_user_inline_keyboard() -> Optional[InlineKeyboardMarkup]:
                 )
             ])
     
-    # Добавляем кнопку поиска в конце
-    inline_buttons.append([
-        InlineKeyboardButton(text="🔍 Поиск", callback_data="start_search")
-    ])
-
+    # Возвращаем клавиатуру только с пользовательскими кнопками
+    if not inline_buttons:
+        return None
+    
     return InlineKeyboardMarkup(inline_keyboard=inline_buttons)
 
 
