@@ -8,7 +8,6 @@ from src.bot.config import get_config
 from src.bot.database.buttons import get_all_buttons, get_button_by_callback_data, get_button_by_id
 from src.bot.database.start_message import get_start_message
 from src.bot.database.button_steps import get_button_steps
-from src.bot.handlers.start import FeedbackStates
 import asyncio
 from src.bot.services.menu_constructor import build_user_inline_keyboard, build_admin_inline_keyboard_with_user_buttons
 
@@ -537,46 +536,4 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     # Редактируем сообщение вместо отправки нового
     await _edit_or_send_message(callback, start_message, reply_markup=kb)
-
-
-@callback_router.callback_query(F.data == "feedback")
-async def handle_feedback_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик кнопки 'Обратная связь'."""
-    user_id = callback.from_user.id
-    username = callback.from_user.username or "не указан"
-    logger.info(f"[CALLBACK] Пользователь {user_id} (@{username}) нажал кнопку: feedback")
-    
-    feedback_text = "Здесь вы можете оставить свою обратную связь/вопросы предложения"
-    
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Написать нам", callback_data="write_to_us_from_feedback")],
-            [InlineKeyboardButton(text="<- Назад", callback_data="back_to_menu")]
-        ]
-    )
-    
-    await callback.answer()
-    await _edit_or_send_message(callback, feedback_text, reply_markup=keyboard)
-
-
-@callback_router.callback_query(F.data == "write_to_us_from_feedback")
-async def handle_write_to_us_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик кнопки 'Написать нам' из меню обратной связи."""
-    user_id = callback.from_user.id
-    username = callback.from_user.username or "не указан"
-    logger.info(f"[CALLBACK] Пользователь {user_id} (@{username}) нажал кнопку: write_to_us_from_feedback")
-    
-    prompt_text = "Напишите нам ваше сообщение:"
-    
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="<- Назад", callback_data="feedback")]
-        ]
-    )
-    
-    # Устанавливаем состояние ожидания сообщения
-    await state.set_state(FeedbackStates.waiting_for_feedback_message)
-    
-    await callback.answer()
-    await _edit_or_send_message(callback, prompt_text, reply_markup=keyboard)
 
