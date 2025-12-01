@@ -5,6 +5,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 import logging
+import asyncpg
 
 from src.bot.config import get_config
 from src.bot.keyboards.common import admin_inline_keyboard
@@ -2587,7 +2588,13 @@ async def delete_step_handler(callback: CallbackQuery, state: FSMContext) -> Non
             await callback.answer("Кнопка не найдена.", show_alert=True)
             return
         
-        success = await delete_button_step(button_id, step_number)
+        try:
+            success = await delete_button_step(button_id, step_number)
+        except asyncpg.UniqueViolationError:
+            # Если вдруг в базе есть битые дубликаты step_number, чистим их и пробуем ещё раз
+            from src.bot.database.button_steps import cleanup_duplicate_steps
+            await cleanup_duplicate_steps(button_id)
+            success = await delete_button_step(button_id, step_number)
         
         if success:
             await callback.answer("✅ Шаг удален", show_alert=True)
