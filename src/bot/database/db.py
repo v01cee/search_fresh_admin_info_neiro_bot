@@ -30,6 +30,7 @@ async def init_db() -> None:
                 callback_data TEXT NOT NULL UNIQUE,
                 message_text TEXT,
                 parent_id INTEGER REFERENCES buttons(id) ON DELETE CASCADE,
+                position INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -71,6 +72,10 @@ async def init_db() -> None:
             pass
         try:
             await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES buttons(id) ON DELETE CASCADE")
+        except Exception:
+            pass
+        try:
+            await conn.execute("ALTER TABLE buttons ADD COLUMN IF NOT EXISTS position INTEGER")
         except Exception:
             pass
         try:

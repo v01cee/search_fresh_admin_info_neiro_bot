@@ -9,6 +9,19 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
     pool = get_db_pool()
     
     async with pool.acquire() as conn:
+        # Определяем позицию для новой кнопки среди кнопок того же уровня (в конце списка)
+        position_row = await conn.fetchrow(
+            """
+            SELECT COALESCE(MAX(position), 0) + 1 AS next_pos
+            FROM buttons
+            WHERE 
+                (parent_id = $1)
+                OR (parent_id IS NULL AND $1 IS NULL)
+            """,
+            parent_id
+        )
+        next_position = position_row["next_pos"] if position_row and position_row["next_pos"] is not None else 1
+        
         # Проверяем, нет ли уже такой кнопки с таким же parent_id
         existing = await conn.fetchrow(
             "SELECT id FROM buttons WHERE text = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))",
@@ -23,12 +36,13 @@ async def add_button_to_db(text: str, message_text: str, parent_id: Optional[int
         temp_callback = "btn_temp"
         
         row = await conn.fetchrow(
-            "INSERT INTO buttons (text, callback_data, message_text, parent_id, delay) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            "INSERT INTO buttons (text, callback_data, message_text, parent_id, delay, position) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
             text,
             temp_callback,
             message_text,
             parent_id,
-            delay
+            delay,
+            next_position
         )
         button_id = row["id"]
         
@@ -72,12 +86,22 @@ async def get_all_buttons(parent_id: Optional[int] = None) -> List[dict]:
     async with pool.acquire() as conn:
         if parent_id is not None:
             rows = await conn.fetch(
-                "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE parent_id = $1 ORDER BY id",
+                """
+                SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay, position
+                FROM buttons
+                WHERE parent_id = $1
+                ORDER BY COALESCE(position, id)
+                """,
                 parent_id
             )
         else:
             rows = await conn.fetch(
-                "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE parent_id IS NULL ORDER BY id"
+                """
+                SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay, position
+                FROM buttons
+                WHERE parent_id IS NULL
+                ORDER BY COALESCE(position, id)
+                """
             )
         
         buttons = []
@@ -106,7 +130,7 @@ async def get_button_by_id(button_id: int) -> Optional[dict]:
     pool = get_db_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE id = $1",
+            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay, position FROM buttons WHERE id = $1",
             button_id
         )
         if not row:
@@ -135,7 +159,7 @@ async def get_button_by_callback_data(callback_data: str) -> Optional[dict]:
     async with pool.acquire() as conn:
         # Сначала пытаемся найти по точному совпадению
         row = await conn.fetchrow(
-            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE callback_data = $1",
+            "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay, position FROM buttons WHERE callback_data = $1",
             callback_data
         )
         
@@ -144,7 +168,7 @@ async def get_button_by_callback_data(callback_data: str) -> Optional[dict]:
             try:
                 button_id = int(callback_data.replace("btn_id_", ""))
                 row = await conn.fetchrow(
-                    "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay FROM buttons WHERE id = $1",
+                    "SELECT id, text, callback_data, message_text, parent_id, file_id, file_type, delay, position FROM buttons WHERE id = $1",
                     button_id
                 )
             except (ValueError, AttributeError):
@@ -317,4 +341,63 @@ async def fix_long_callback_data() -> None:
                 logger.info(f"Создан callback_data для кнопки ID={button_id}: {len(new_callback.encode('utf-8'))} байт")
         
         logger.info(f"Исправлено {fixed_count} кнопок")
+
+
+async def move_button_within_parent(button_id: int, new_position: int) -> bool:
+    """
+    Переместить кнопку внутри её родителя на новую позицию.
+    Кнопка вставляется на позицию new_position (1..N), остальные сдвигаются.
+    """
+    pool = get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Получаем информацию о кнопке и её родителе
+            btn = await conn.fetchrow(
+                "SELECT id, parent_id, position FROM buttons WHERE id = $1",
+                button_id
+            )
+            if not btn:
+                return False
+            
+            parent_id = btn["parent_id"]
+            
+            # Получаем все кнопки этого уровня в текущем порядке
+            rows = await conn.fetch(
+                """
+                SELECT id
+                FROM buttons
+                WHERE 
+                    (parent_id = $1)
+                    OR (parent_id IS NULL AND $1 IS NULL)
+                ORDER BY COALESCE(position, id)
+                """,
+                parent_id
+            )
+            if not rows:
+                return False
+            
+            ids = [r["id"] for r in rows]
+            if button_id not in ids:
+                return False
+            
+            # Нормализуем позиции 1..N
+            max_pos = len(ids)
+            if new_position < 1:
+                new_position = 1
+            if new_position > max_pos:
+                new_position = max_pos
+            
+            # Формируем новый порядок
+            ids.remove(button_id)
+            ids.insert(new_position - 1, button_id)
+            
+            # Перезаписываем позиции
+            for idx, bid in enumerate(ids, start=1):
+                await conn.execute(
+                    "UPDATE buttons SET position = $1 WHERE id = $2",
+                    idx,
+                    bid
+                )
+            
+            return True
 

@@ -29,11 +29,13 @@ def get_config() -> BotConfig:
     DEFAULT_TOKEN = "CHANGE_ME_BOT_TOKEN"
     DEFAULT_ADMIN_IDS = [5818121757, 177260006, 1283802964]
     DEFAULT_LOG_LEVEL = "INFO"
+    # Локальные/демо-настройки БД. Реальные значения задавай через переменные окружения или .env
     DEFAULT_DB_HOST = "localhost"
     DEFAULT_DB_PORT = 5432
     DEFAULT_DB_NAME = "postgres"
     DEFAULT_DB_USER = "postgres"
     DEFAULT_DB_PASSWORD = "CHANGE_ME_DB_PASSWORD"
+    # Демо-ключ для AI. Реальный ключ укажи в переменной окружения DEEPSEEK_API_KEY
     DEFAULT_DEEPSEEK_API_KEY = "CHANGE_ME_DEEPSEEK_API_KEY"
     DEFAULT_AI_SERVICE_URL = "https://api.deepseek.com/v1"
     

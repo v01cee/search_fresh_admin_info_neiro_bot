@@ -11,7 +11,8 @@ from src.bot.keyboards.common import admin_inline_keyboard
 from src.bot.database.buttons import (
     add_button_to_db, get_all_buttons, update_button_text,
     update_button_message_text, delete_button, get_button_by_id,
-    update_button_file, remove_button_file, get_button_by_callback_data
+    update_button_file, remove_button_file, get_button_by_callback_data,
+    move_button_within_parent
 )
 from src.bot.database.button_steps import (
     add_button_step, get_button_steps, delete_button_steps,
@@ -47,6 +48,7 @@ class AdminStates(StatesGroup):
     waiting_for_new_step_content = State()  # Ожидание контента для нового шага
     waiting_for_new_step_file_caption = State()  # Ожидание текста для файла нового шага
     waiting_for_new_step_position = State()  # Ожидание позиции для нового шага
+    waiting_for_button_move_position = State()  # Ожидание новой позиции для кнопки при смещении
 
 
 def _is_admin(user_id: int) -> bool:
@@ -182,6 +184,9 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
         ])
         inline_keyboard.append([
             InlineKeyboardButton(text="✏️ Изменить текст кнопки", callback_data=f"edit_button_name_{button['id']}")
+        ])
+        inline_keyboard.append([
+            InlineKeyboardButton(text="↕️ Сместить кнопку", callback_data=f"move_button_{button['id']}")
         ])
         inline_keyboard.append([
             InlineKeyboardButton(text="🗑️ Удалить кнопку", callback_data=f"delete_button_{button['id']}")
@@ -528,6 +533,121 @@ async def admin_edit_text_start(callback: CallbackQuery, state: FSMContext) -> N
     )
 
 
+@admin_router.callback_query(F.data.startswith("move_button_"))
+async def move_button_start(callback: CallbackQuery, state: FSMContext) -> None:
+    """Начало смещения (перемещения) кнопки на новую позицию среди соседей."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("У вас нет прав.", show_alert=True)
+        return
+    
+    try:
+        button_id = int(callback.data.replace("move_button_", ""))
+        button = await get_button_by_id(button_id)
+        if not button:
+            await callback.answer("Кнопка не найдена.", show_alert=True)
+            return
+        
+        parent_id = button.get("parent_id")
+        # Получаем всех соседей для вычисления диапазона
+        siblings = await get_all_buttons(parent_id=parent_id)
+        total = len(siblings)
+        if total <= 1:
+            await callback.answer("Здесь всего одна кнопка, смещать нечего.", show_alert=True)
+            return
+        
+        await state.update_data(moving_button_id=button_id, moving_parent_id=parent_id, moving_max_position=total)
+        await state.set_state(AdminStates.waiting_for_button_move_position)
+        await callback.answer()
+        
+        back_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"move_button_cancel_{button_id}")]
+        ])
+        
+        await callback.message.answer(
+            f"На какую позицию (от 1 до {total}) сместить кнопку <b>{button['text']}</b>?",
+            reply_markup=back_kb
+        )
+    except ValueError:
+        await callback.answer("Ошибка: некорректный ID кнопки.", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
+
+
+@admin_router.callback_query(F.data.startswith("move_button_cancel_"))
+async def move_button_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отмена смещения кнопки."""
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("У вас нет прав.", show_alert=True)
+        return
+    
+    try:
+        button_id = int(callback.data.replace("move_button_cancel_", ""))
+        await state.clear()
+        await _preserve_admin_mode(state, callback.from_user.id)
+        await state.update_data(admin_mode=True, user_mode=False)
+        
+        kb, text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
+        await callback.answer("Отменено")
+        await callback.message.answer(text, reply_markup=kb)
+    except Exception as e:
+        await callback.answer(f"Ошибка: {e}", show_alert=True)
+
+
+@admin_router.message(AdminStates.waiting_for_button_move_position, F.text)
+async def move_button_save_position(message: Message, state: FSMContext) -> None:
+    """Сохранение новой позиции кнопки и смещение остальных."""
+    if not _is_admin(message.from_user.id):
+        await _clear_state_preserving_admin(state, message.from_user.id)
+        return
+    
+    try:
+        new_pos = int((message.text or "").strip())
+        data = await state.get_data()
+        button_id = data.get("moving_button_id")
+        parent_id = data.get("moving_parent_id")
+        max_pos = data.get("moving_max_position") or 1
+        
+        if not button_id:
+            await message.answer("❌ Ошибка: не найдена кнопка для смещения.")
+            await state.clear()
+            return
+        
+        if new_pos < 1 or new_pos > max_pos:
+            await message.answer(f"❌ Позиция должна быть от 1 до {max_pos}. Попробуй ещё раз.")
+            return
+        
+        success = await move_button_within_parent(button_id, new_pos)
+        if not success:
+            await message.answer("❌ Не удалось сместить кнопку.")
+            await state.clear()
+            return
+        
+        await state.clear()
+        await _preserve_admin_mode(state, message.from_user.id)
+        await state.update_data(admin_mode=True, user_mode=False)
+        
+        button = await get_button_by_id(button_id)
+        button_text = button["text"] if button else "кнопка"
+        
+        # После смещения показываем список кнопок родителя или главное меню
+        if parent_id:
+            kb, text = await _build_button_view_keyboard(parent_id, state, message.from_user.id)
+            await message.answer(
+                f"✅ Кнопка <b>{button_text}</b> смещена на позицию {new_pos}.",
+            )
+            await message.answer(text, reply_markup=kb)
+        else:
+            # Кнопка верхнего уровня — обновляем главное меню админа
+            admin_kb = await build_admin_inline_keyboard_with_user_buttons()
+            await message.answer(
+                f"✅ Кнопка <b>{button_text}</b> смещена на позицию {new_pos} в главном меню.",
+                reply_markup=admin_kb
+            )
+    except ValueError:
+        await message.answer("❌ Нужно отправить число позиции (например, 1, 2, 3...).")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        await state.clear()
 
 
 @admin_router.message(AdminStates.waiting_for_new_start_message, F.text)
