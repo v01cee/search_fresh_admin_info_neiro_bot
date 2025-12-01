@@ -27,6 +27,20 @@ from src.bot.database.start_message import get_start_message
 admin_router = Router(name="admin")
 
 
+async def _log_admin_state(prefix: str, state: FSMContext, user_id: int) -> None:
+    """Удобное логирование текущего admin_mode / user_mode."""
+    try:
+        data = await state.get_data()
+        logging.getLogger(__name__).info(
+            "[ADMIN_STATE] %s user_id=%s admin_mode=%s user_mode=%s",
+            prefix,
+            user_id,
+            data.get("admin_mode"),
+            data.get("user_mode"),
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning("[ADMIN_STATE] %s failed: %s", prefix, e)
+
 class AdminStates(StatesGroup):
     # Состояния для создания новой кнопки
     waiting_for_new_button_text = State()  # Ожидание названия кнопки
@@ -328,7 +342,10 @@ async def admin_add_button_start_with_parent(callback: CallbackQuery, state: FSM
         return
 
     try:
+        await _log_admin_state("admin_add_button_start_with_parent:before_clear", state, callback.from_user.id)
         await _clear_state_preserving_admin(state, callback.from_user.id)
+        await state.update_data(admin_mode=True, user_mode=False)
+        await _log_admin_state("admin_add_button_start_with_parent:after_clear", state, callback.from_user.id)
         
         parent_id_str = callback.data.replace("admin_add_button_", "")
         if not parent_id_str:
@@ -359,7 +376,10 @@ async def admin_add_button_start(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("У вас нет прав.", show_alert=True)
         return
 
+    await _log_admin_state("admin_add_button_start:before_clear", state, callback.from_user.id)
     await _clear_state_preserving_admin(state, callback.from_user.id)
+    await state.update_data(admin_mode=True, user_mode=False)
+    await _log_admin_state("admin_add_button_start:after_clear", state, callback.from_user.id)
     await state.update_data(steps=[], next_delay=0, parent_id=None)
     await state.set_state(AdminStates.waiting_for_new_button_text)
     await callback.answer()
@@ -1842,8 +1862,11 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
     parent_id = data.get("parent_id")
     user_id = message.from_user.id
     
+    # Логируем текущее состояние админа
+    await _log_admin_state("finish_button_creation:started", state, user_id)
     # Сохраняем админский режим перед очисткой
     await _preserve_admin_mode(state, user_id)
+    await _log_admin_state("finish_button_creation:after_preserve", state, user_id)
     
     if not button_text:
         await message.answer("Ошибка: не найден текст кнопки.")
@@ -1882,11 +1905,12 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
                 steps_count = len(steps)
                 
                 # Очищаем состояние, сохраняя админский режим
+                await _log_admin_state("finish_button_creation:parent_before_clear", state, user_id)
                 await _clear_state_preserving_admin(state, user_id)
-                
                 # Явно устанавливаем админский режим (на всякий случай)
                 if _is_admin(user_id):
                     await state.update_data(admin_mode=True, user_mode=False)
+                await _log_admin_state("finish_button_creation:parent_after_clear", state, user_id)
                 
                 # Строим клавиатуру ДО отправки сообщения об успехе
                 admin_kb, admin_text = await _build_button_view_keyboard(parent_id, state, user_id)
@@ -1900,9 +1924,11 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
         
         # Если кнопка в главном меню
         # Очищаем состояние и гарантированно возвращаем админа в админ-режим
+        await _log_admin_state("finish_button_creation:root_before_clear", state, user_id)
         await _clear_state_preserving_admin(state, user_id)
         if _is_admin(user_id):
             await state.update_data(admin_mode=True, user_mode=False)
+        await _log_admin_state("finish_button_creation:root_after_clear", state, user_id)
         
         buttons = await get_all_buttons()
         preview = "\n".join(f"- {b['text']} (ID: {b['id']})" for b in buttons) if buttons else "пока нет кнопок"
@@ -1917,10 +1943,12 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
         )
     except Exception as e:
         await message.answer(f"❌ Ошибка при добавлении кнопки: {e}")
+        await _log_admin_state("finish_button_creation:exception_before_clear", state, user_id)
         await state.clear()
         # Восстанавливаем админский режим
         if _is_admin(user_id):
             await state.update_data(admin_mode=True, user_mode=False)
+        await _log_admin_state("finish_button_creation:exception_after_clear", state, user_id)
 
 
 # ВАЖНО: Этот обработчик должен быть ПОСЛЕ edit_step_, так как edit_step_ более специфичен
