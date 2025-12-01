@@ -1899,6 +1899,11 @@ async def finish_button_creation(message: Message, state: FSMContext) -> None:
                 return
         
         # Если кнопка в главном меню
+        # Очищаем состояние и гарантированно возвращаем админа в админ-режим
+        await _clear_state_preserving_admin(state, user_id)
+        if _is_admin(user_id):
+            await state.update_data(admin_mode=True, user_mode=False)
+        
         buttons = await get_all_buttons()
         preview = "\n".join(f"- {b['text']} (ID: {b['id']})" for b in buttons) if buttons else "пока нет кнопок"
         
