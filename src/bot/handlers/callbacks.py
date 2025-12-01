@@ -252,6 +252,9 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 InlineKeyboardButton(text="✏️ Изменить текст кнопки", callback_data=f"edit_button_name_{button['id']}")
             ])
             admin_keyboard.append([
+                InlineKeyboardButton(text="↕️ Сместить кнопку", callback_data=f"move_button_{button['id']}")
+            ])
+            admin_keyboard.append([
                 InlineKeyboardButton(text="🗑️ Удалить кнопку", callback_data=f"delete_button_{button['id']}")
             ])
             
@@ -317,6 +320,9 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 ])
                 admin_keyboard.append([
                     InlineKeyboardButton(text="✏️ Изменить текст кнопки", callback_data=f"edit_button_name_{button['id']}")
+                ])
+                admin_keyboard.append([
+                    InlineKeyboardButton(text="↕️ Сместить кнопку", callback_data=f"move_button_{button['id']}")
                 ])
                 admin_keyboard.append([
                     InlineKeyboardButton(text="🗑️ Удалить кнопку", callback_data=f"delete_button_{button['id']}")
