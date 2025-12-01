@@ -160,7 +160,12 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
         return admin_kb, "❌ Кнопка не найдена."
     
     # Получаем дочерние кнопки
-    child_buttons = await get_all_buttons(parent_id=button['id'])
+    # Специальный случай: кнопка "Функционал РОО" (ID: 76) должна показывать
+    # те же дочерние кнопки, что и "Функционал РОП" (ID: 34)
+    parent_for_children_id = button["id"]
+    if button["id"] == 76:
+        parent_for_children_id = 34
+    child_buttons = await get_all_buttons(parent_id=parent_for_children_id)
     
     # Получаем шаги кнопки
     steps = await get_button_steps(button['id'])

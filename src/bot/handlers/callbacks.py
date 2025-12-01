@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 callback_router = Router(name="callbacks")
 
+# Маппинг: некоторые кнопки используют дочерние кнопки другой кнопки.
+# Пример: кнопка "Функционал РОО" (ID: 76) должна показывать те же дочерние
+# кнопки, что и "Функционал РОП" (ID: 34).
+ALIAS_CHILDREN_SOURCE = {
+    76: 34,
+}
+
 # Максимальная длина callback_data в Telegram (64 байта)
 MAX_CALLBACK_DATA_LENGTH = 64
 
@@ -125,8 +132,10 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
     if button:
         await callback.answer(f"Вы нажали: {button['text']}")
         
-        # Получаем дочерние кнопки
-        child_buttons = await get_all_buttons(parent_id=button['id'])
+        # Получаем дочерние кнопки.
+        # Для некоторых кнопок (например, Функционал РОО) берём детей от другой кнопки.
+        parent_for_children_id = ALIAS_CHILDREN_SOURCE.get(button["id"], button["id"])
+        child_buttons = await get_all_buttons(parent_id=parent_for_children_id)
         
         # Создаём клавиатуру с кнопками
         inline_keyboard = []
