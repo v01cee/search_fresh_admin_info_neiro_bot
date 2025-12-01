@@ -5,6 +5,7 @@ from typing import List, Dict, Optional, Tuple
 
 from src.bot.config import get_config
 from src.bot.database.buttons import get_all_buttons, get_button_by_id
+from src.bot.database.button_steps import get_all_steps_for_buttons
 
 
 async def get_all_buttons_recursive(parent_id: Optional[int] = None) -> List[Dict]:
@@ -36,20 +37,46 @@ async def ai_search_buttons(query: str) -> Tuple[Optional[str], List[Dict]]:
     if not all_buttons:
         return None, []
     
-    # Формируем полный список кнопок для AI с информацией о родителях
+    # Оптимизация: создаем словарь кнопок для быстрого доступа
+    buttons_dict = {btn["id"]: btn for btn in all_buttons}
+    
+    # Оптимизация: получаем все шаги одним запросом
+    button_ids = [btn["id"] for btn in all_buttons]
+    all_steps = await get_all_steps_for_buttons(button_ids)
+    
+    # Формируем полный список кнопок для AI с информацией о родителях и всем текстовым контентом
     buttons_info = []
     for btn in all_buttons:
         btn_text = btn.get("text", "")
         btn_message = btn.get("message_text", "")
         parent_id = btn.get("parent_id")
         
+        # Получаем шаги из кэша (уже загружены одним запросом)
+        steps = all_steps.get(btn["id"], [])
+        steps_texts = []
+        for step in steps:
+            step_text = step.get("content_text", "")
+            if step_text:
+                steps_texts.append(step_text)
+        
+        # Объединяем весь текстовый контент: название + сообщение + шаги
+        all_text_content = []
+        if btn_text:
+            all_text_content.append(f"Название: {btn_text}")
+        if btn_message:
+            all_text_content.append(f"Сообщение: {btn_message}")
+        if steps_texts:
+            all_text_content.append(f"Шаги: {' | '.join(steps_texts)}")
+        
+        full_text = " | ".join(all_text_content)
+        
+        # Оптимизация: строим путь к родителю используя кэш кнопок
         parent_path = ""
         if parent_id:
-            # Строим путь к родителю
-            current_parent_id = parent_id
             path_parts = []
+            current_parent_id = parent_id
             while current_parent_id:
-                parent_btn = await get_button_by_id(current_parent_id)
+                parent_btn = buttons_dict.get(current_parent_id)
                 if parent_btn:
                     path_parts.insert(0, parent_btn["text"])
                     current_parent_id = parent_btn.get("parent_id")
@@ -62,8 +89,10 @@ async def ai_search_buttons(query: str) -> Tuple[Optional[str], List[Dict]]:
             "id": btn["id"],
             "text": btn_text,
             "message": btn_message,
+            "steps": steps_texts,
             "parent_path": parent_path,
-            "full_info": f"{btn_text}{parent_path}" + (f" - {btn_message[:100]}" if btn_message else "")
+            "full_text": full_text,
+            "full_info": f"{btn_text}{parent_path} | {full_text}"
         })
     
     # Создаём детальный список для AI
@@ -74,7 +103,7 @@ async def ai_search_buttons(query: str) -> Tuple[Optional[str], List[Dict]]:
     
     prompt = f"""Ты умный помощник для поиска кнопок в боте. Пользователь ищет: "{query}"
 
-Вот полный список всех доступных кнопок в боте:
+Вот полный список всех доступных кнопок в боте с их полным текстовым содержимым (название, сообщение, шаги):
 {buttons_list}
 
 Твоя задача:
@@ -83,18 +112,19 @@ async def ai_search_buttons(query: str) -> Tuple[Optional[str], List[Dict]]:
 3. Если нашёл релевантные кнопки - верни ТОЛЬКО номера самых подходящих кнопок через запятую, например: 1, 3, 5
 
 КРИТИЧЕСКИ ВАЖНО:
+- Ищи по ВСЕМУ текстовому содержимому: названиям кнопок, тексту сообщений и тексту всех шагов
 - Выбирай ТОЛЬКО самые релевантные кнопки, которые точно соответствуют запросу пользователя
 - НЕ возвращай все кнопки подряд, даже если они частично совпадают
-- Если пользователь ищет "руководитель отдела продаж", выбирай только кнопки, которые напрямую связаны с руководителем отдела продаж, а не все кнопки, где есть слово "отдел" или "продаж"
 - Учитывай контекст и семантику: выбирай кнопки, которые наиболее точно отвечают на запрос пользователя
-- Если есть точное совпадение по названию - верни только его, не добавляй похожие кнопки
+- Если совпадение найдено в тексте сообщения или шагов - это тоже релевантный результат
+- Если есть точное совпадение - верни его, но также учитывай семантически близкие результаты
 
-Пример: если запрос "руководитель отдела продаж", а есть кнопки:
-- "Функционал РОП" (Руководитель Отдела Продаж) - это подходит
-- "Компетенции Руководителя отдела" - это может подходить, если это про руководителя отдела продаж
-- "Отделы вовлеченные в продажи" - это НЕ подходит напрямую, не возвращай её
+Пример: если запрос "руководитель отдела продаж", ищи в:
+- Названиях кнопок (например, "Функционал РОП")
+- Тексте сообщений кнопок
+- Тексте всех шагов кнопок
 
-Выбирай умно и точно!"""
+Выбирай умно и точно по всему текстовому содержимому!"""
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -143,10 +173,10 @@ async def ai_search_buttons(query: str) -> Tuple[Optional[str], List[Dict]]:
                         result_indices = [int(n) - 1 for n in numbers if 0 <= int(n) - 1 < len(buttons_info)]
                         results = [buttons_info[i] for i in result_indices if i < len(buttons_info)]
                         
-                        # Преобразуем обратно в формат кнопок
+                        # Преобразуем обратно в формат кнопок (используем кэш)
                         final_results = []
                         for btn_info in results:
-                            btn = await get_button_by_id(btn_info["id"])
+                            btn = buttons_dict.get(btn_info["id"])
                             if btn:
                                 final_results.append(btn)
                         return None, final_results

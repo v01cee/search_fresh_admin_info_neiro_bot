@@ -22,51 +22,55 @@ class BotConfig:
 
 
 def get_config() -> BotConfig:
-    """Получает конфигурацию из переменных окружения."""
-    # Получаем токен бота
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        raise ValueError("BOT_TOKEN не найден в переменных окружения. Укажите его в .env файле.")
+    """Получает конфигурацию из переменных окружения или использует значения по умолчанию."""
+    # Значения по умолчанию
+    # ВАЖНО: здесь НЕ должно быть реальных токенов / паролей.
+    # Используем пустые/демо-значения, реальные значения задаются через переменные окружения или .env
+    DEFAULT_TOKEN = "CHANGE_ME_BOT_TOKEN"
+    DEFAULT_ADMIN_IDS = [5818121757, 177260006, 1283802964]
+    DEFAULT_LOG_LEVEL = "INFO"
+    DEFAULT_DB_HOST = "localhost"
+    DEFAULT_DB_PORT = 5432
+    DEFAULT_DB_NAME = "postgres"
+    DEFAULT_DB_USER = "postgres"
+    DEFAULT_DB_PASSWORD = "CHANGE_ME_DB_PASSWORD"
+    DEFAULT_DEEPSEEK_API_KEY = "CHANGE_ME_DEEPSEEK_API_KEY"
+    DEFAULT_AI_SERVICE_URL = "https://api.deepseek.com/v1"
+    
+    # Получаем токен бота (приоритет у переменной окружения)
+    token = os.getenv("BOT_TOKEN", DEFAULT_TOKEN)
     
     # Получаем ID админов
     admin_ids_str = os.getenv("ADMIN_IDS")
-    if not admin_ids_str:
-        raise ValueError("ADMIN_IDS не найден в переменных окружения. Укажите его в .env файле.")
-    admin_ids = [int(id.strip()) for id in admin_ids_str.split(",") if id.strip()]
-    if not admin_ids:
-        raise ValueError("ADMIN_IDS должен содержать хотя бы один ID администратора.")
+    if admin_ids_str:
+        admin_ids = [int(id.strip()) for id in admin_ids_str.split(",") if id.strip()]
+        if not admin_ids:
+            admin_ids = DEFAULT_ADMIN_IDS
+    else:
+        admin_ids = DEFAULT_ADMIN_IDS
     
-    # Получаем уровень логирования (опционально, по умолчанию INFO)
-    log_level = os.getenv("LOG_LEVEL", "INFO")
+    # Получаем уровень логирования
+    log_level = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL)
     
     # Получаем настройки БД
-    db_host = os.getenv("DB_HOST")
-    if not db_host:
-        raise ValueError("DB_HOST не найден в переменных окружения. Укажите его в .env файле.")
+    db_host = os.getenv("DB_HOST", DEFAULT_DB_HOST)
     
     db_port_str = os.getenv("DB_PORT")
-    if not db_port_str:
-        raise ValueError("DB_PORT не найден в переменных окружения. Укажите его в .env файле.")
-    try:
-        db_port = int(db_port_str)
-    except ValueError:
-        raise ValueError(f"DB_PORT должен быть числом, получено: {db_port_str}")
+    if db_port_str:
+        try:
+            db_port = int(db_port_str)
+        except ValueError:
+            db_port = DEFAULT_DB_PORT
+    else:
+        db_port = DEFAULT_DB_PORT
     
-    db_name = os.getenv("DB_NAME")
-    if not db_name:
-        raise ValueError("DB_NAME не найден в переменных окружения. Укажите его в .env файле.")
-    
-    db_user = os.getenv("DB_USER")
-    if not db_user:
-        raise ValueError("DB_USER не найден в переменных окружения. Укажите его в .env файле.")
-    
-    db_password = os.getenv("DB_PASSWORD")
-    if not db_password:
-        raise ValueError("DB_PASSWORD не найден в переменных окружения. Укажите его в .env файле.")
+    db_name = os.getenv("DB_NAME", DEFAULT_DB_NAME)
+    db_user = os.getenv("DB_USER", DEFAULT_DB_USER)
+    db_password = os.getenv("DB_PASSWORD", DEFAULT_DB_PASSWORD)
     
     # Получаем настройки DeepSeek (опционально)
-    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-    ai_service_url = os.getenv("AI_SERVICE_URL", "https://api.deepseek.com/v1")
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", DEFAULT_DEEPSEEK_API_KEY)
+    ai_service_url = os.getenv("AI_SERVICE_URL", DEFAULT_AI_SERVICE_URL)
     
     return BotConfig(
         token=token,

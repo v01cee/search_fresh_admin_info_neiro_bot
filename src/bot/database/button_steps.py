@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 import asyncpg
 
 from src.bot.database.db import get_db_pool
@@ -84,6 +84,36 @@ async def get_button_steps(button_id: int) -> List[dict]:
             button_id
         )
         return [dict(row) for row in rows]
+
+
+async def get_all_steps_for_buttons(button_ids: List[int]) -> Dict[int, List[dict]]:
+    """Получить все шаги для списка кнопок одним запросом.
+    Возвращает словарь {button_id: [список шагов]}."""
+    if not button_ids:
+        return {}
+    
+    pool = get_db_pool()
+    async with pool.acquire() as conn:
+        # Получаем все шаги для всех кнопок одним запросом
+        rows = await conn.fetch(
+            """
+            SELECT id, button_id, step_number, content_type, content_text, file_id, file_type, delay
+            FROM button_steps
+            WHERE button_id = ANY($1::int[])
+            ORDER BY button_id, step_number
+            """,
+            button_ids
+        )
+        
+        # Группируем шаги по button_id
+        steps_by_button = {}
+        for row in rows:
+            button_id = row["button_id"]
+            if button_id not in steps_by_button:
+                steps_by_button[button_id] = []
+            steps_by_button[button_id].append(dict(row))
+        
+        return steps_by_button
 
 
 async def delete_button_steps(button_id: int) -> bool:

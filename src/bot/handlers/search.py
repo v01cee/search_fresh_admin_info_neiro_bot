@@ -53,22 +53,24 @@ def _truncate_callback_data(callback_data: str) -> str:
 
 
 async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:
-    """Очищает состояние, сохраняя админский режим."""
-    # Сохраняем админский режим перед очисткой
-    if _is_admin(user_id):
-        await state.update_data(admin_mode=True, user_mode=False)
+    """Очищает состояние, сохраняя текущий режим пользователя (user_mode/admin_mode)."""
+    # Сохраняем текущий режим перед очисткой
+    data = await state.get_data()
+    saved_admin_mode = data.get("admin_mode", False)
+    saved_user_mode = data.get("user_mode", False)
+    
     # Очищаем состояние
     await state.clear()
-    # Восстанавливаем админский режим
-    if _is_admin(user_id):
-        await state.update_data(admin_mode=True, user_mode=False)
+    
+    # Восстанавливаем сохраненный режим
+    await state.update_data(admin_mode=saved_admin_mode, user_mode=saved_user_mode)
 
 
 @search_router.message(Command("search"))
 async def search_start_command(message: Message, state: FSMContext) -> None:
     """Начало поиска через команду."""
     await state.set_state(SearchStates.waiting_for_search_query)
-    await message.answer("🔍 Введи текст для поиска по кнопкам:")
+    await message.answer("🔍 Введи текст для поиска:")
 
 
 @search_router.callback_query(F.data == "start_search")
@@ -76,7 +78,7 @@ async def search_start_callback(callback: CallbackQuery, state: FSMContext) -> N
     """Начало поиска через кнопку в стартовом меню."""
     await state.set_state(SearchStates.waiting_for_search_query)
     await callback.answer()
-    await callback.message.answer("🔍 Введи текст для поиска по кнопкам:")
+    await callback.message.answer("🔍 Введи текст для поиска:")
 
 
 @search_router.message(SearchStates.waiting_for_search_query, F.text)
@@ -91,9 +93,18 @@ async def search_execute(message: Message, state: FSMContext) -> None:
         await message.answer("Поисковый запрос слишком короткий. Введи минимум 2 символа.")
         return
     
+    # Отправляем сообщение о начале поиска
+    search_start_msg = await message.answer("🔍 Поиск начат, это может занять некоторое время...")
+    
     try:
         # Всегда используем AI-поиск через DeepSeek
         error_message, results = await ai_search_buttons(query)
+        
+        # Удаляем сообщение о начале поиска
+        try:
+            await search_start_msg.delete()
+        except:
+            pass
         
         # Если AI вернул сообщение об ошибке (бессмысленный запрос)
         if error_message:
@@ -148,6 +159,11 @@ async def search_execute(message: Message, state: FSMContext) -> None:
         await message.answer(results_text, reply_markup=kb)
         
     except Exception as e:
+        # Удаляем сообщение о начале поиска при ошибке
+        try:
+            await search_start_msg.delete()
+        except:
+            pass
         await message.answer(f"❌ Ошибка при поиске: {e}")
         await _clear_state_preserving_admin(state, message.from_user.id)
 

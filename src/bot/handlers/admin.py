@@ -92,6 +92,25 @@ async def _preserve_admin_mode(state: FSMContext, user_id: int) -> None:
         await state.update_data(admin_mode=True, user_mode=False)
 
 
+async def _edit_or_send_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup = None) -> None:
+    """Редактирует сообщение или отправляет новое, если редактирование невозможно."""
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        # Если сообщение нельзя отредактировать (например, изменился тип контента), отправляем новое
+        if "message is not modified" in str(e).lower() or "message can't be edited" in str(e).lower():
+            # Сообщение не изменилось или нельзя редактировать - отправляем новое
+            await callback.message.answer(text, reply_markup=reply_markup)
+        else:
+            # Другая ошибка - пробуем отправить новое сообщение
+            logging.warning(f"Не удалось отредактировать сообщение: {e}, отправляем новое")
+            await callback.message.answer(text, reply_markup=reply_markup)
+    except Exception as e:
+        # Любая другая ошибка - отправляем новое сообщение
+        logging.error(f"Ошибка при редактировании сообщения: {e}, отправляем новое")
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None:
     """Очищает состояние, сохраняя админский режим."""
     # Сохраняем админский режим перед очисткой
@@ -132,20 +151,15 @@ async def _build_button_view_keyboard(button_id: int, state: FSMContext, user_id
     # Проверяем, является ли пользователь админом
     is_admin_user = _is_admin(user_id)
     
-    # Проверяем режим админа и явно устанавливаем, если админ
+    # Проверяем режим пользователя
     data = await state.get_data()
     admin_mode = data.get("admin_mode", False)
-    
-    # Если пользователь админ, но admin_mode не установлен - устанавливаем его
-    if is_admin_user and not admin_mode:
-        await state.update_data(admin_mode=True, user_mode=False)
-        admin_mode = True
+    user_mode = data.get("user_mode", False)
     
     inline_keyboard = []
     
-    # Если пользователь админ - ВСЕГДА показываем админскую клавиатуру, независимо от admin_mode в state
-    # (admin_mode нужен для других проверок, но для показа меню достаточно проверки _is_admin)
-    if is_admin_user:
+    # Показываем админское меню только если админ И в режиме админа (не в режиме пользователя)
+    if is_admin_user and admin_mode and not user_mode:
         # Сначала добавляем дочерние кнопки, если они есть
         if child_buttons:
             for btn in child_buttons:
@@ -252,6 +266,33 @@ def _get_next_step_delay(data: dict) -> int:
     return data.get("next_delay", 0)
 
 
+async def _build_finalization_keyboard(state: FSMContext) -> InlineKeyboardMarkup:
+    """Строит клавиатуру финализации. Кнопка 'Добавить задержку' показывается начиная со второго шага."""
+    data = await state.get_data()
+    steps = data.get("steps", [])
+    next_delay = data.get("next_delay", 0)
+    
+    finalization_buttons = [
+        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")]
+    ]
+    
+    # Задержку можно добавить начиная со второго шага
+    # Задержка применяется между шагами, поэтому:
+    # - После первого шага (len(steps) >= 1): кнопка показывается, задержка будет между первым и вторым шагом
+    # - После второго шага и далее: задержка будет между предыдущим и следующим шагом
+    if len(steps) >= 1:
+        finalization_buttons.append(
+            [InlineKeyboardButton(text=_get_delay_button_text(next_delay), callback_data="button_add_delay")]
+        )
+    
+    finalization_buttons.extend([
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=finalization_buttons)
+
+
 @admin_router.message(Command("admin"))
 async def admin_entry(message: Message, state: FSMContext) -> None:
     if not _is_admin(message.from_user.id):
@@ -294,7 +335,8 @@ async def admin_add_button_start_with_parent(callback: CallbackQuery, state: FSM
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_button_creation")]
         ])
         
-        await callback.message.answer("Отправь название кнопки:", reply_markup=cancel_kb)
+        # Редактируем сообщение вместо отправки нового
+        await _edit_or_send_message(callback, "Отправь название кнопки:", reply_markup=cancel_kb)
     except ValueError:
         await callback.answer("Ошибка: некорректный ID родительской кнопки.", show_alert=True)
     except Exception as e:
@@ -317,7 +359,8 @@ async def admin_add_button_start(callback: CallbackQuery, state: FSMContext) -> 
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_button_creation")]
     ])
     
-    await callback.message.answer("Отправь название кнопки:", reply_markup=cancel_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, "Отправь название кнопки:", reply_markup=cancel_kb)
 
 
 @admin_router.message(AdminStates.waiting_for_new_button_text, F.text)
@@ -383,14 +426,8 @@ async def admin_add_button_content_text(message: Message, state: FSMContext) -> 
     # Показываем сообщение о загрузке шага
     await message.answer(f"✅ {step_number} шаг загружен: Текст")
     
-    # Клавиатура для финализации (показываем задержку для следующего шага)
-    delay = 0  # Пока нет следующего шага, задержка 0
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    # Клавиатура для финализации
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await message.answer(
         "Это всё или переходим к следующему шагу?",
@@ -463,7 +500,8 @@ async def admin_edit_button(callback: CallbackQuery) -> None:
         return
 
     await callback.answer()
-    await callback.message.answer("Функция изменения кнопки пока в разработке.", reply_markup=admin_inline_keyboard())
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, "Функция изменения кнопки пока в разработке.", reply_markup=admin_inline_keyboard())
 
 
 @admin_router.callback_query(F.data == "admin_edit_text")
@@ -566,7 +604,8 @@ async def edit_button_name_cancel(callback: CallbackQuery, state: FSMContext) ->
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
-    await callback.message.answer(button_text, reply_markup=button_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, button_text, reply_markup=button_kb)
 
 
 @admin_router.callback_query(F.data.startswith("edit_button_message_cancel_"))
@@ -581,7 +620,8 @@ async def edit_button_message_cancel(callback: CallbackQuery, state: FSMContext)
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
-    await callback.message.answer(button_text, reply_markup=button_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, button_text, reply_markup=button_kb)
 
 
 @admin_router.callback_query(F.data.startswith("add_file_cancel_"))
@@ -596,7 +636,8 @@ async def add_file_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
     await callback.answer("Отменено")
-    await callback.message.answer(button_text, reply_markup=button_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, button_text, reply_markup=button_kb)
 
 
 @admin_router.callback_query(F.data == "button_delay_cancel")
@@ -609,15 +650,7 @@ async def button_delay_cancel(callback: CallbackQuery, state: FSMContext) -> Non
     await state.set_state(AdminStates.waiting_for_button_finalization)
     await callback.answer("Отменено")
     
-    data = await state.get_data()
-    delay = data.get("next_delay", 0)
-    
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await callback.message.answer(
         "Это всё или переходим к следующему шагу?",
@@ -664,6 +697,7 @@ async def change_step_delay_cancel(callback: CallbackQuery, state: FSMContext) -
             ])
             
             kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+            # Отправляем новое сообщение с клавиатурой
             await callback.message.answer("Выберите действие:", reply_markup=kb)
 
 
@@ -706,6 +740,7 @@ async def change_step_content_cancel(callback: CallbackQuery, state: FSMContext)
             ])
             
             kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+            # Отправляем новое сообщение с клавиатурой
             await callback.message.answer("Выберите действие:", reply_markup=kb)
 
 
@@ -1243,7 +1278,8 @@ async def button_file_caption_no(callback: CallbackQuery, state: FSMContext) -> 
     
     # Возвращаемся к просмотру кнопки
     button_kb, button_text = await _build_button_view_keyboard(button_id, state, callback.from_user.id)
-    await callback.message.answer(button_text, reply_markup=button_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, button_text, reply_markup=button_kb)
 
 
 @admin_router.message(AdminStates.waiting_for_file_caption_for_button, F.text)
@@ -1315,12 +1351,14 @@ async def cancel_button_creation(callback: CallbackQuery, state: FSMContext) -> 
                 await state.update_data(admin_mode=True, user_mode=False)
         
         button_kb, button_text = await _build_button_view_keyboard(parent_id, state, callback.from_user.id)
-        await callback.message.answer(button_text, reply_markup=button_kb)
+        # Редактируем сообщение вместо отправки нового
+        await _edit_or_send_message(callback, button_text, reply_markup=button_kb)
     else:
         # Возвращаем в главное меню
         admin_kb = await build_admin_inline_keyboard_with_user_buttons()
         start_text = await get_start_message()
-        await callback.message.answer(start_text, reply_markup=admin_kb)
+        # Редактируем сообщение вместо отправки нового
+        await _edit_or_send_message(callback, start_text, reply_markup=admin_kb)
 
 
 @admin_router.callback_query(F.data == "button_add_delay")
@@ -1355,22 +1393,13 @@ async def button_delay_back(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AdminStates.waiting_for_button_finalization)
     await callback.answer()
     
-    # Получаем задержку для следующего шага из состояния
-    data = await state.get_data()
-    next_delay = data.get("next_delay", 0)
-    
     # Показываем клавиатуру финализации
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(next_delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await callback.message.answer(
         "Это всё или переходим к следующему шагу?",
-            reply_markup=finalization_kb
-        )
+        reply_markup=finalization_kb
+    )
 
 
 @admin_router.message(AdminStates.waiting_for_file_caption, F.text)
@@ -1406,14 +1435,8 @@ async def file_caption_save(message: Message, state: FSMContext) -> None:
     # Переходим к финализации
     await message.answer(f"✅ {step_number} шаг загружен: Файл: {file_type}")
     
-    # Клавиатура для финализации (показываем задержку для следующего шага)
-    delay = 0
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    # Клавиатура для финализации
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await message.answer(
         "Это всё или переходим к следующему шагу?",
@@ -1475,14 +1498,8 @@ async def file_caption_skip(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(f"✅ {step_number} шаг загружен: Файл: {file_type}")
     
-    # Клавиатура для финализации (показываем задержку для следующего шага)
-    delay = 0
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    # Клавиатура для финализации
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await callback.message.answer(
         "Это всё или переходим к следующему шагу?",
@@ -1545,16 +1562,8 @@ async def button_delay_save(message: Message, state: FSMContext) -> None:
         # Возвращаемся к финализации
         await state.set_state(AdminStates.waiting_for_button_finalization)
         
-        # Получаем данные для отображения задержки
-        data = await state.get_data()
-        next_delay = data.get("next_delay", delay)  # Используем сохраненную задержку
-        
-        finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-            [InlineKeyboardButton(text=_get_delay_button_text(next_delay), callback_data="button_add_delay")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-        ])
+        # Клавиатура для финализации
+        finalization_kb = await _build_finalization_keyboard(state)
         
         await message.answer(
             f"✅ Задержка установлена: {delay} секунд (будет применена перед следующим шагом)\n\n"
@@ -1595,14 +1604,8 @@ async def admin_finalization_text_handler(message: Message, state: FSMContext) -
     
     await message.answer(f"✅ {step_number} шаг загружен: Текст")
     
-    # Клавиатура для финализации (показываем задержку для следующего шага)
-    delay = 0
-    finalization_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Готово", callback_data="button_finish_creation")],
-        [InlineKeyboardButton(text=_get_delay_button_text(delay), callback_data="button_add_delay")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="button_step_back")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="button_cancel_confirm")]
-    ])
+    # Клавиатура для финализации
+    finalization_kb = await _build_finalization_keyboard(state)
     
     await message.answer(
         "Это всё или переходим к следующему шагу?",
@@ -1703,7 +1706,8 @@ async def button_cancel_confirm_handler(callback: CallbackQuery, state: FSMConte
     # Возвращаем в главное меню
     admin_kb = await build_admin_inline_keyboard_with_user_buttons()
     start_text = await get_start_message()
-    await callback.message.answer(start_text, reply_markup=admin_kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, start_text, reply_markup=admin_kb)
 
 
 async def finish_button_creation(message: Message, state: FSMContext) -> None:
@@ -1857,6 +1861,7 @@ async def edit_steps_handler(callback: CallbackQuery, state: FSMContext) -> None
                 reply_markup=kb
             )
         else:
+            # Отправляем новое сообщение с клавиатурой
             await callback.message.answer(
                 f"Шаги к кнопке <b>{button['text']}</b>",
                 reply_markup=kb
@@ -2229,6 +2234,7 @@ async def confirm_add_step_handler(callback: CallbackQuery, state: FSMContext) -
             ])
             
             kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+            # Отправляем новое сообщение с клавиатурой
             await callback.message.answer(
                 f"✅ Шаг добавлен на позицию {position}. Все последующие шаги перенумерованы.\n\n"
                 f"Шаги к кнопке <b>{button['text']}</b>",
@@ -2418,6 +2424,7 @@ async def edit_step_handler(callback: CallbackQuery, state: FSMContext) -> None:
         ])
         
         kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+        # Отправляем новое сообщение с клавиатурой
         await callback.message.answer("Выберите действие:", reply_markup=kb)
         
     except (ValueError, IndexError):
@@ -2481,6 +2488,7 @@ async def delete_step_handler(callback: CallbackQuery, state: FSMContext) -> Non
                     InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")
                 ])
                 kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+                # Отправляем новое сообщение с клавиатурой
                 await callback.message.answer(
                     f"✅ Шаг {step_number} удален.\n\n"
                     f"✅ Все шаги кнопки <b>{button['text']}</b> удалены.\n\n"
@@ -2492,6 +2500,7 @@ async def delete_step_handler(callback: CallbackQuery, state: FSMContext) -> Non
                     InlineKeyboardButton(text="◀️ Назад", callback_data=_truncate_callback_data(button["callback_data"]))
                 ])
                 kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+                # Отправляем новое сообщение с клавиатурой
                 await callback.message.answer(
                     f"✅ Шаг {step_number} удален. Все последующие шаги перенумерованы.\n\n"
                     f"Шаги к кнопке <b>{button['text']}</b>",
@@ -2849,6 +2858,7 @@ async def step_file_caption_no(callback: CallbackQuery, state: FSMContext) -> No
             ])
             
             kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+            # Отправляем новое сообщение с клавиатурой
             await callback.message.answer("Выберите действие:", reply_markup=kb)
 
 

@@ -87,6 +87,25 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
 
 
+async def _edit_or_send_message(callback: CallbackQuery, text: str, reply_markup: InlineKeyboardMarkup = None) -> None:
+    """Редактирует сообщение или отправляет новое, если редактирование невозможно."""
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        # Если сообщение нельзя отредактировать (например, изменился тип контента), отправляем новое
+        if "message is not modified" in str(e).lower() or "message can't be edited" in str(e).lower():
+            # Сообщение не изменилось или нельзя редактировать - отправляем новое
+            await callback.message.answer(text, reply_markup=reply_markup)
+        else:
+            # Другая ошибка - пробуем отправить новое сообщение
+            logger.warning(f"Не удалось отредактировать сообщение: {e}, отправляем новое")
+            await callback.message.answer(text, reply_markup=reply_markup)
+    except Exception as e:
+        # Любая другая ошибка - отправляем новое сообщение
+        logger.error(f"Ошибка при редактировании сообщения: {e}, отправляем новое")
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
 @callback_router.callback_query(F.data.startswith("btn_"))
 async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> None:
     """Обработчик нажатий на инлайн-кнопки."""
@@ -199,17 +218,13 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
         # Проверяем, является ли пользователь админом
         is_admin_user = _is_admin(callback.from_user.id)
         
-        # Проверяем режим админа и устанавливаем, если админ
+        # Проверяем режим пользователя
         data = await state.get_data()
         admin_mode = data.get("admin_mode", False)
+        user_mode = data.get("user_mode", False)
         
-        # Если пользователь админ, но admin_mode не установлен - устанавливаем его
-        if is_admin_user and not admin_mode:
-            await state.update_data(admin_mode=True, user_mode=False)
-            admin_mode = True
-        
-        # Если пользователь админ - ВСЕГДА показываем админ-меню, независимо от admin_mode в state
-        if is_admin_user:
+        # Показываем админское меню только если админ И в режиме админа (не в режиме пользователя)
+        if is_admin_user and admin_mode and not user_mode:
             # Если есть шаги и пользователь админ - НЕ отправляем шаги, показываем только админскую клавиатуру
             admin_keyboard = []
             
@@ -261,21 +276,23 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Обнаружены проблемные callback_data, исправлены: {problems}")
             
-            try:
-                await callback.message.answer(
-                    f"Кнопка: <b>{button['text']}</b>\n"
-                    f"Количество шагов: {len(steps)}",
-                    reply_markup=admin_kb
-                )
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Ошибка при отправке клавиатуры: {e}")
-                await callback.answer("Ошибка при отображении меню", show_alert=True)
+            # Редактируем сообщение вместо отправки нового
+            await _edit_or_send_message(
+                callback,
+                f"Кнопка: <b>{button['text']}</b>\n"
+                f"Количество шагов: {len(steps)}",
+                reply_markup=admin_kb
+            )
         elif steps:
             # Строим клавиатуру заранее, чтобы прикрепить к последнему шагу
             final_keyboard = None
-            if is_admin_user:
+            # Проверяем режим пользователя
+            data = await state.get_data()
+            admin_mode = data.get("admin_mode", False)
+            user_mode = data.get("user_mode", False)
+            
+            # Показываем админское меню только если админ И в режиме админа (не в режиме пользователя)
+            if is_admin_user and admin_mode and not user_mode:
                 admin_keyboard = []
                 
                 # Сначала добавляем дочерние кнопки, если они есть
@@ -319,10 +336,46 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 
                 final_keyboard = InlineKeyboardMarkup(inline_keyboard=admin_keyboard)
             else:
-                # Для обычных пользователей используем клавиатуру с дочерними кнопками
-                final_keyboard = kb
+                # Для обычных пользователей строим клавиатуру с дочерними кнопками и кнопкой "Назад"
+                user_keyboard = []
+                
+                # Добавляем дочерние кнопки, если они есть
+                if child_buttons:
+                    for btn in child_buttons:
+                        button_text = btn["text"]
+                        delay = btn.get("delay", 0)
+                        if delay and delay > 0:
+                            button_text = f"{button_text} ✓ ({delay} сек)"
+                        user_keyboard.append([
+                            InlineKeyboardButton(
+                                text=button_text,
+                                callback_data=_truncate_callback_data(btn["callback_data"])
+                            )
+                        ])
+                
+                # Кнопка "Назад"
+                if button.get("parent_id"):
+                    parent_button = await get_button_by_id(button["parent_id"])
+                    if parent_button:
+                        user_keyboard.append([
+                            InlineKeyboardButton(
+                                text="◀️ Назад",
+                                callback_data=_truncate_callback_data(parent_button["callback_data"])
+                            )
+                        ])
+                else:
+                    user_keyboard.append([
+                        InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")
+                    ])
+                
+                final_keyboard = InlineKeyboardMarkup(inline_keyboard=user_keyboard) if user_keyboard else None
             
             # Если есть шаги и пользователь не админ (или админ не в админском режиме) - отправляем все шаги
+            # Используем bot напрямую для гарантированной отправки новых сообщений
+            # НЕ редактируем существующие сообщения, только отправляем новые
+            bot = callback.bot
+            chat_id = callback.message.chat.id
+            
             for i, step in enumerate(steps):
                 # Если это не первый шаг и есть задержка - ждем
                 if i > 0 and step.get("delay", 0) > 0:
@@ -337,13 +390,13 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 is_last_step = (i == len(steps) - 1)
                 
                 if content_type == "text":
-                    # Отправляем текст
+                    # Отправляем текст новым сообщением
                     if content_text:
                         # Если это последний шаг, прикрепляем клавиатуру
                         if is_last_step and final_keyboard:
-                            await callback.message.answer(content_text, reply_markup=final_keyboard)
+                            await bot.send_message(chat_id=chat_id, text=content_text, reply_markup=final_keyboard)
                         else:
-                            await callback.message.answer(content_text)
+                            await bot.send_message(chat_id=chat_id, text=content_text)
                 elif content_type == "file" and file_id:
                     # Telegram ограничивает caption до 1024 символов
                     MAX_CAPTION_LENGTH = 1024
@@ -363,27 +416,27 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                     
                     try:
                         if file_type == "photo":
-                            await callback.message.answer_photo(photo=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption, reply_markup=reply_markup)
                         elif file_type == "video":
-                            await callback.message.answer_video(video=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_video(chat_id=chat_id, video=file_id, caption=caption, reply_markup=reply_markup)
                         elif file_type == "document":
-                            await callback.message.answer_document(document=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_document(chat_id=chat_id, document=file_id, caption=caption, reply_markup=reply_markup)
                         elif file_type == "audio":
-                            await callback.message.answer_audio(audio=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_audio(chat_id=chat_id, audio=file_id, caption=caption, reply_markup=reply_markup)
                         elif file_type == "voice":
-                            await callback.message.answer_voice(voice=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_voice(chat_id=chat_id, voice=file_id, caption=caption, reply_markup=reply_markup)
                         elif file_type == "video_note":
-                            await callback.message.answer_video_note(video_note=file_id, reply_markup=reply_markup)
+                            await bot.send_video_note(chat_id=chat_id, video_note=file_id, reply_markup=reply_markup)
                         else:
                             # По умолчанию отправляем как документ
-                            await callback.message.answer_document(document=file_id, caption=caption, reply_markup=reply_markup)
+                            await bot.send_document(chat_id=chat_id, document=file_id, caption=caption, reply_markup=reply_markup)
                         
                         # Если текст был слишком длинным и должен был отправиться отдельно
                         if text_to_send_separately:
                             if is_last_step and final_keyboard:
-                                await callback.message.answer(text_to_send_separately, reply_markup=final_keyboard)
+                                await bot.send_message(chat_id=chat_id, text=text_to_send_separately, reply_markup=final_keyboard)
                             else:
-                                await callback.message.answer(text_to_send_separately)
+                                await bot.send_message(chat_id=chat_id, text=text_to_send_separately)
                     except TelegramBadRequest as e:
                         logger.error(f"Ошибка при отправке файла (шаг {i+1}): {e}. file_id={file_id}, file_type={file_type}")
                         # Отправляем сообщение об ошибке
@@ -394,16 +447,16 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                             error_msg += f"\n\n{content_text}"
                         
                         if is_last_step and final_keyboard:
-                            await callback.message.answer(error_msg, reply_markup=final_keyboard)
+                            await bot.send_message(chat_id=chat_id, text=error_msg, reply_markup=final_keyboard)
                         else:
-                            await callback.message.answer(error_msg)
+                            await bot.send_message(chat_id=chat_id, text=error_msg)
                         
                         # Если текст был слишком длинным и должен был отправиться отдельно
                         if text_to_send_separately:
                             if is_last_step and final_keyboard:
-                                await callback.message.answer(text_to_send_separately, reply_markup=final_keyboard)
+                                await bot.send_message(chat_id=chat_id, text=text_to_send_separately, reply_markup=final_keyboard)
                             else:
-                                await callback.message.answer(text_to_send_separately)
+                                await bot.send_message(chat_id=chat_id, text=text_to_send_separately)
                     
             
             # Клавиатура уже прикреплена к последнему шагу, больше ничего не отправляем
@@ -443,7 +496,8 @@ async def handle_button_callback(callback: CallbackQuery, state: FSMContext) -> 
                 if not message_text:
                     # Если текст сообщения не задан, показываем стартовое сообщение из БД
                     message_text = await get_start_message()
-                await callback.message.answer(message_text, reply_markup=kb)
+                # Редактируем сообщение вместо отправки нового
+                await _edit_or_send_message(callback, message_text, reply_markup=kb)
     else:
         await callback.answer("Кнопка не найдена", show_alert=True)
 
@@ -465,5 +519,6 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
         kb = await build_user_inline_keyboard()
     
     await callback.answer()
-    await callback.message.answer(start_message, reply_markup=kb)
+    # Редактируем сообщение вместо отправки нового
+    await _edit_or_send_message(callback, start_message, reply_markup=kb)
 
