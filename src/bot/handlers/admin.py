@@ -1977,15 +1977,15 @@ async def edit_steps_handler(callback: CallbackQuery, state: FSMContext) -> None
         kb = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
         
         if not steps:
-            # Если шагов нет, показываем сообщение и возвращаемся в главное меню
-            await callback.message.answer(
+            # Если шагов нет, изменяем текущее сообщение на текст про отсутствие шагов
+            await callback.message.edit_text(
                 f"✅ Все шаги кнопки <b>{button['text']}</b> удалены.\n\n"
                 "Шагов не осталось. Вы можете добавить новый шаг или вернуться в главное меню.",
                 reply_markup=kb
             )
         else:
-            # Отправляем новое сообщение с клавиатурой
-            await callback.message.answer(
+            # Меняем текущее сообщение на список шагов
+            await callback.message.edit_text(
                 f"Шаги к кнопке <b>{button['text']}</b>",
                 reply_markup=kb
             )
