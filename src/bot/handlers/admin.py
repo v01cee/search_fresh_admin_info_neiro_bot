@@ -1854,13 +1854,12 @@ async def button_cancel_confirm_handler(callback: CallbackQuery, state: FSMConte
     await _edit_or_send_message(callback, start_text, reply_markup=admin_kb)
 
 
-async def finish_button_creation(message: Message, state: FSMContext) -> None:
+async def finish_button_creation(message: Message, state: FSMContext, user_id: int) -> None:
     """Завершение создания кнопки и сохранение в БД."""
     data = await state.get_data()
     button_text = data.get("button_text")
     steps = data.get("steps", [])
     parent_id = data.get("parent_id")
-    user_id = message.from_user.id
     
     # Логируем текущее состояние админа
     await _log_admin_state("finish_button_creation:started", state, user_id)
@@ -2601,7 +2600,7 @@ async def button_finish_creation_handler(callback: CallbackQuery, state: FSMCont
         return
     
     await callback.answer()
-    await finish_button_creation(callback.message, state)
+    await finish_button_creation(callback.message, state, callback.from_user.id)
 
 
 @admin_router.callback_query(F.data.startswith("delete_step_"))
