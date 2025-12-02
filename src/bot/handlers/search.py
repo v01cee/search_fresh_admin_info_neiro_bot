@@ -119,8 +119,23 @@ async def search_execute(message: Message, state: FSMContext) -> None:
         # Очищаем состояние только если поиск успешен
         await _clear_state_preserving_admin(state, message.from_user.id)
         
-        # Если ничего не найдено
-        if not results:
+        # Удаляем дубликаты по названию кнопки (по запросу: одна кнопка с одинаковым названием)
+        unique_results = []
+        seen_titles: set[str] = set()
+        for btn in results:
+            title = (btn.get("text") or "").strip().lower()
+            if not title:
+                # Если по какой‑то причине нет названия, просто добавляем как есть
+                unique_results.append(btn)
+                continue
+            if title in seen_titles:
+                # Пропускаем дубликат с тем же названием
+                continue
+            seen_titles.add(title)
+            unique_results.append(btn)
+
+        # Если ничего не найдено (после удаления дубликатов)
+        if not unique_results:
             await message.answer(
                 f"❌ По запросу <b>«{query}»</b> ничего не найдено.\n"
                 "Попробуй другой запрос или используй более общие слова."
@@ -128,10 +143,10 @@ async def search_execute(message: Message, state: FSMContext) -> None:
             return
         
         # Показываем результаты поиска
-        results_text = f"🔍 Найдено кнопок: <b>{len(results)}</b>\n\n"
+        results_text = f"🔍 Найдено кнопок: <b>{len(unique_results)}</b>\n\n"
         inline_keyboard = []
         
-        for btn in results[:10]:  # Ограничиваем до 10 результатов
+        for btn in unique_results[:10]:  # Ограничиваем до 10 результатов
             parent_info = ""
             if btn.get("parent_id"):
                 from src.bot.database.buttons import get_button_by_id
@@ -147,8 +162,8 @@ async def search_execute(message: Message, state: FSMContext) -> None:
                 )
             ])
         
-        if len(results) > 10:
-            results_text += f"\n... и ещё {len(results) - 10} кнопок"
+        if len(unique_results) > 10:
+            results_text += f"\n... и ещё {len(unique_results) - 10} кнопок"
         
         # Кнопка "Назад"
         inline_keyboard.append([
