@@ -48,9 +48,10 @@ async def main() -> None:
     # Регистрация роутеров
     dp.include_router(start_router)
     dp.include_router(admin_router)
+    # Обратная связь должна обрабатываться раньше общего поиска и echo
+    dp.include_router(feedback_router)
     dp.include_router(search_router)
     dp.include_router(callback_router)
-    dp.include_router(feedback_router)
     dp.include_router(echo_router)  # Показывает ID пользователя, если он пишет вне контекста
 
     logging.info("Бот запущен. Нажми Ctrl+C для остановки.")
