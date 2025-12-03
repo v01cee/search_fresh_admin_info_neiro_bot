@@ -61,10 +61,56 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
         await message.answer("⚠️ Обратная связь временно недоступна для администраторов.")
     else:
         try:
+            bot = message.bot
             # Сначала отправляем заголовок с инфой о пользователе
-            await message.bot.send_message(chat_id=feedback_chat_id, text=header)
-            # Затем пересылаем само сообщение (любой тип контента)
-            await message.forward(chat_id=feedback_chat_id)
+            await bot.send_message(chat_id=feedback_chat_id, text=header)
+
+            # Затем отправляем само содержимое сообщения (без forward, чтобы фото/видео точно дошли)
+            if message.text:
+                await bot.send_message(chat_id=feedback_chat_id, text=message.text)
+            elif message.photo:
+                await bot.send_photo(
+                    chat_id=feedback_chat_id,
+                    photo=message.photo[-1].file_id,
+                    caption=message.caption or "",
+                )
+            elif message.document:
+                await bot.send_document(
+                    chat_id=feedback_chat_id,
+                    document=message.document.file_id,
+                    caption=message.caption or "",
+                )
+            elif message.video:
+                await bot.send_video(
+                    chat_id=feedback_chat_id,
+                    video=message.video.file_id,
+                    caption=message.caption or "",
+                )
+            elif message.voice:
+                await bot.send_voice(
+                    chat_id=feedback_chat_id,
+                    voice=message.voice.file_id,
+                    caption=message.caption or "",
+                )
+            elif message.audio:
+                await bot.send_audio(
+                    chat_id=feedback_chat_id,
+                    audio=message.audio.file_id,
+                    caption=message.caption or "",
+                )
+            elif message.video_note:
+                await bot.send_video_note(
+                    chat_id=feedback_chat_id,
+                    video_note=message.video_note.file_id,
+                )
+            elif message.sticker:
+                await bot.send_sticker(
+                    chat_id=feedback_chat_id,
+                    sticker=message.sticker.file_id,
+                )
+            else:
+                # На всякий случай отправляем как forward, если тип контента не обработан явно
+                await message.forward(chat_id=feedback_chat_id)
         except Exception:
             await message.answer("⚠️ Не удалось отправить обратную связь администратору, но твоё сообщение получено.")
 
