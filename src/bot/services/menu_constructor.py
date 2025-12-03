@@ -82,7 +82,7 @@ async def build_user_main_menu_keyboard() -> Optional[InlineKeyboardMarkup]:
     inline_keyboard.append(
         [
             InlineKeyboardButton(
-                text="💬 Обратная связь",
+                text="Обратная связь",
                 callback_data="feedback_start",
             )
         ]

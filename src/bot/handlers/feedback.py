@@ -35,11 +35,6 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
     config = get_config()
     feedback_chat_id = config.feedback_chat_id
 
-    if not feedback_chat_id:
-        await message.answer("⚠️ Обратная связь временно недоступна. Сообщи администратору.")
-        await state.clear()
-        return
-
     user = message.from_user
     chat = message.chat
 
@@ -54,21 +49,23 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
     if chat.title:
         header += f"📛 Chat title: <code>{chat.title}</code>\n"
 
-    try:
-        # Сначала отправляем заголовок с инфой о пользователе
-        await message.bot.send_message(chat_id=feedback_chat_id, text=header)
-        # Затем пересылаем само сообщение (любой тип контента)
-        await message.forward(chat_id=feedback_chat_id)
-    except Exception:
-        await message.answer("⚠️ Не удалось отправить обратную связь. Попробуй позже или сообщи администратору.")
-        await state.clear()
-        return
+    # Пытаемся отправить в группу, но даже при ошибке благодарим пользователя
+    if not feedback_chat_id:
+        await message.answer("⚠️ Обратная связь временно недоступна для администраторов.")
+    else:
+        try:
+            # Сначала отправляем заголовок с инфой о пользователе
+            await message.bot.send_message(chat_id=feedback_chat_id, text=header)
+            # Затем пересылаем само сообщение (любой тип контента)
+            await message.forward(chat_id=feedback_chat_id)
+        except Exception:
+            await message.answer("⚠️ Не удалось отправить обратную связь администратору, но твоё сообщение получено.")
 
     # Очищаем состояние и возвращаем в главное меню
     await state.clear()
 
     # Благодарность пользователю
-    await message.answer("✅ Молодец, ты сделал полезное дело!")
+    await message.answer("Молодец, ты сделал полезное дело!")
 
     # Возвращаем в главное меню
     start_text = await get_start_message()
