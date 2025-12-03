@@ -38,16 +38,23 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
     user = message.from_user
     chat = message.chat
 
-    header = (
-        "📩 Новая обратная связь от пользователя:\n"
-        f"👤 User ID: <code>{user.id}</code>\n"
-        f"🔗 Username: @{user.username}" if user.username else "🔗 Username: —"
-    )
-    header += f"\n👤 Имя: {user.full_name}"
-    header += f"\n💬 Chat ID: <code>{chat.id}</code>\n"
-    header += f"🏷️ Chat type: <code>{chat.type}</code>\n"
+    # Формируем заголовок для сообщения в группу (всё по-русски)
+    header_lines = [
+        "📩 Новая обратная связь от пользователя:",
+        f"🆔 ID пользователя: <code>{user.id}</code>",
+    ]
+    if user.username:
+        header_lines.append(f"🔗 Юзернейм: @{user.username}")
+    else:
+        header_lines.append("🔗 Юзернейм: —")
+
+    header_lines.append(f"👤 Имя: {user.full_name}")
+    header_lines.append(f"💬 ID чата: <code>{chat.id}</code>")
+    header_lines.append(f"🏷️ Тип чата: <code>{chat.type}</code>")
     if chat.title:
-        header += f"📛 Chat title: <code>{chat.title}</code>\n"
+        header_lines.append(f"📛 Название чата: <code>{chat.title}</code>")
+
+    header = "\n".join(header_lines)
 
     # Пытаемся отправить в группу, но даже при ошибке благодарим пользователя
     if not feedback_chat_id:
