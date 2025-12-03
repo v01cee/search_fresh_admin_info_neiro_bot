@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from src.bot.config import get_config
 from src.bot.database.start_message import get_start_message
@@ -22,8 +22,31 @@ async def feedback_start(callback: CallbackQuery, state: FSMContext) -> None:
     """
     await state.set_state(FeedbackStates.waiting_for_feedback)
     await callback.answer()
-    await callback.message.answer("✍️ Сообщи, если что-то не нашел или что-то работает не так.\n\n"
-                                  "Можешь отправить текст, голос, фото или документ.")
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="feedback_cancel")],
+        ]
+    )
+
+    await callback.message.answer(
+        "✍️ Сообщи, если что-то не нашел или что-то работает не так.\n\n"
+        "Можешь отправить текст, голос, фото или документ.",
+        reply_markup=kb,
+    )
+
+
+@feedback_router.callback_query(F.data == "feedback_cancel")
+async def feedback_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Отмена ввода обратной связи и возврат в главное меню.
+    """
+    await state.clear()
+    await callback.answer()
+
+    start_text = await get_start_message()
+    kb = await build_user_main_menu_keyboard()
+    await callback.message.answer(start_text, reply_markup=kb)
 
 
 @feedback_router.message(FeedbackStates.waiting_for_feedback)
