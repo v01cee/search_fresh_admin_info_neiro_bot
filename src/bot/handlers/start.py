@@ -1,5 +1,5 @@
 from aiogram import Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 import logging
@@ -52,5 +52,20 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     # Отправляем стартовое сообщение и сохраняем его message_id в состоянии
     sent_message = await message.answer(start_text, reply_markup=kb)
     await state.update_data(main_menu_message_id=sent_message.message_id)
+
+
+@start_router.message(Command("group_id"))
+async def cmd_group_id(message: Message) -> None:
+    """
+    Команда для получения ID текущего чата (группы/супергруппы/канала или личного чата).
+    Удобно кидать в нужную группу и вызывать /group_id.
+    """
+    chat = message.chat
+    await message.answer(
+        "Информация о чате:\n"
+        f"ID: <code>{chat.id}</code>\n"
+        f"Тип: <code>{chat.type}</code>\n"
+        f"Название: <code>{chat.title or '—'}</code>"
+    )
 
 
