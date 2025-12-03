@@ -14,6 +14,7 @@ from .handlers.admin import admin_router
 from .handlers.callbacks import callback_router
 from .handlers.search import search_router
 from .handlers.echo import echo_router
+from .handlers.feedback import feedback_router
 
 
 async def main() -> None:
@@ -49,6 +50,7 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(search_router)
     dp.include_router(callback_router)
+    dp.include_router(feedback_router)
     dp.include_router(echo_router)  # Показывает ID пользователя, если он пишет вне контекста
 
     logging.info("Бот запущен. Нажми Ctrl+C для остановки.")

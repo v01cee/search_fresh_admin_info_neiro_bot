@@ -69,6 +69,28 @@ async def build_user_inline_keyboard() -> Optional[InlineKeyboardMarkup]:
     return InlineKeyboardMarkup(inline_keyboard=inline_buttons)
 
 
+async def build_user_main_menu_keyboard() -> Optional[InlineKeyboardMarkup]:
+    """
+    Построить главное меню для пользователя:
+    - все пользовательские кнопки из БД
+    - отдельная кнопка 'Обратная связь' внизу.
+    """
+    base_kb = await build_user_inline_keyboard()
+    inline_keyboard = base_kb.inline_keyboard if base_kb else []
+
+    # Добавляем кнопку "Обратная связь" всегда в самый низ
+    inline_keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="💬 Обратная связь",
+                callback_data="feedback_start",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
+
+
 async def build_admin_inline_keyboard_with_user_buttons() -> InlineKeyboardMarkup:
     """
     Построить инлайн-клавиатуру для админа:

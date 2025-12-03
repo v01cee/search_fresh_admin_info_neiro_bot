@@ -9,7 +9,11 @@ from src.bot.database.buttons import get_all_buttons, get_button_by_callback_dat
 from src.bot.database.start_message import get_start_message
 from src.bot.database.button_steps import get_button_steps
 import asyncio
-from src.bot.services.menu_constructor import build_user_inline_keyboard, build_admin_inline_keyboard_with_user_buttons
+from src.bot.services.menu_constructor import (
+    build_user_inline_keyboard,
+    build_admin_inline_keyboard_with_user_buttons,
+    build_user_main_menu_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -530,8 +534,8 @@ async def back_to_menu(callback: CallbackQuery, state: FSMContext) -> None:
     if _is_admin(callback.from_user.id) and admin_mode:
         kb = await build_admin_inline_keyboard_with_user_buttons()
     else:
-        # Для всех остальных - только пользовательские кнопки
-        kb = await build_user_inline_keyboard()
+        # Для всех остальных - главное меню с кнопкой обратной связи
+        kb = await build_user_main_menu_keyboard()
     
     await callback.answer()
     # Редактируем сообщение вместо отправки нового

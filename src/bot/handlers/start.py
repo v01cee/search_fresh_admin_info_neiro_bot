@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 import logging
 
-from src.bot.services.menu_constructor import build_user_inline_keyboard
+from src.bot.services.menu_constructor import build_user_main_menu_keyboard
 from src.bot.database.start_message import get_start_message
 from src.bot.config import get_config
 
@@ -46,7 +46,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         f"user_mode={data_after.get('user_mode', False)}"
     )
     
-    kb = await build_user_inline_keyboard()
+    kb = await build_user_main_menu_keyboard()
     start_text = await get_start_message()
 
     # Отправляем стартовое сообщение и сохраняем его message_id в состоянии

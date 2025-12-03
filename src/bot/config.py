@@ -19,6 +19,7 @@ class BotConfig:
     db_password: str
     deepseek_api_key: Optional[str]
     ai_service_url: str
+    feedback_chat_id: Optional[int]
 
 
 def get_config() -> BotConfig:
@@ -71,6 +72,15 @@ def get_config() -> BotConfig:
     # Получаем настройки DeepSeek (опционально)
     deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", DEFAULT_DEEPSEEK_API_KEY)
     ai_service_url = os.getenv("AI_SERVICE_URL", DEFAULT_AI_SERVICE_URL)
+
+    # Чат для обратной связи (группа/канал)
+    feedback_chat_id: Optional[int] = None
+    feedback_chat_id_str = os.getenv("FEEDBACK_GROUP_ID") or os.getenv("FEEDBACK_CHAT_ID")
+    if feedback_chat_id_str:
+        try:
+            feedback_chat_id = int(feedback_chat_id_str)
+        except ValueError:
+            feedback_chat_id = None
     
     return BotConfig(
         token=token,
@@ -83,6 +93,7 @@ def get_config() -> BotConfig:
         db_password=db_password,
         deepseek_api_key=deepseek_api_key,
         ai_service_url=ai_service_url,
+        feedback_chat_id=feedback_chat_id,
     )
 
 

@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
-from src.bot.services.menu_constructor import build_user_inline_keyboard
+from src.bot.services.menu_constructor import build_user_main_menu_keyboard
 from src.bot.handlers.search import SearchStates
 from src.bot.handlers.admin import AdminStates
 
@@ -27,7 +27,7 @@ async def echo_message(message: Message, state: FSMContext) -> None:
     username = message.from_user.username or "не указан"
     first_name = message.from_user.first_name or "не указано"
     
-    kb = await build_user_inline_keyboard()
+    kb = await build_user_main_menu_keyboard()
     
     await message.answer(
         f"Ваш ID: <code>{user_id}</code>\n"
