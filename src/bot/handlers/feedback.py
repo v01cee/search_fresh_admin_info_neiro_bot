@@ -58,37 +58,13 @@ async def handle_feedback_message(message: Message, state: FSMContext) -> None:
     config = get_config()
     feedback_chat_id = config.feedback_chat_id
 
-    user = message.from_user
-    chat = message.chat
-
-    # Формируем заголовок для сообщения в группу (всё по-русски)
-    header_lines = [
-        "📩 Новая обратная связь от пользователя:",
-        f"🆔 ID пользователя: <code>{user.id}</code>",
-    ]
-    if user.username:
-        header_lines.append(f"🔗 Юзернейм: @{user.username}")
-    else:
-        header_lines.append("🔗 Юзернейм: —")
-
-    header_lines.append(f"👤 Имя: {user.full_name}")
-    header_lines.append(f"💬 ID чата: <code>{chat.id}</code>")
-    header_lines.append(f"🏷️ Тип чата: <code>{chat.type}</code>")
-    if chat.title:
-        header_lines.append(f"📛 Название чата: <code>{chat.title}</code>")
-
-    header = "\n".join(header_lines)
-
     # Пытаемся отправить в группу, но даже при ошибке благодарим пользователя
     if not feedback_chat_id:
         await message.answer("⚠️ Обратная связь временно недоступна для администраторов.")
     else:
         try:
             bot = message.bot
-            # Сначала отправляем заголовок с инфой о пользователе
-            await bot.send_message(chat_id=feedback_chat_id, text=header)
-
-            # Затем отправляем само содержимое сообщения (без forward, чтобы фото/видео точно дошли)
+            # Отправляем только само сообщение пользователя (без служебных заголовков)
             if message.text:
                 await bot.send_message(chat_id=feedback_chat_id, text=message.text)
             elif message.photo:

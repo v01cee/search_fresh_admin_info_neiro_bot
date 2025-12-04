@@ -20,6 +20,15 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.admin_ids
 
 
+def _is_feedback_chat(chat_id: int) -> bool:
+    """
+    Возвращает True, если сообщение пришло в чат, который используется как
+    группа для обратной связи. В таком чате поиск работать не должен.
+    """
+    config = get_config()
+    return bool(config.feedback_chat_id) and chat_id == config.feedback_chat_id
+
+
 # Максимальная длина callback_data в Telegram (64 байта)
 MAX_CALLBACK_DATA_LENGTH = 64
 
@@ -69,6 +78,9 @@ async def _clear_state_preserving_admin(state: FSMContext, user_id: int) -> None
 @search_router.message(Command("search"))
 async def search_start_command(message: Message, state: FSMContext) -> None:
     """Начало поиска через команду."""
+    # Не запускаем поиск в чате обратной связи
+    if _is_feedback_chat(message.chat.id):
+        return
     await state.set_state(SearchStates.waiting_for_search_query)
     await message.answer("🔍 Введи текст для поиска:")
 
@@ -76,6 +88,10 @@ async def search_start_command(message: Message, state: FSMContext) -> None:
 @search_router.callback_query(F.data == "start_search")
 async def search_start_callback(callback: CallbackQuery, state: FSMContext) -> None:
     """Начало поиска через кнопку в стартовом меню."""
+    # Не запускаем поиск в чате обратной связи
+    if _is_feedback_chat(callback.message.chat.id):
+        await callback.answer()
+        return
     await state.set_state(SearchStates.waiting_for_search_query)
     await callback.answer()
     await callback.message.answer("🔍 Введи текст для поиска:")
@@ -84,6 +100,10 @@ async def search_start_callback(callback: CallbackQuery, state: FSMContext) -> N
 @search_router.message(SearchStates.waiting_for_search_query, F.text)
 async def search_execute(message: Message, state: FSMContext) -> None:
     """Выполнение поиска."""
+    # Не выполняем поиск в чате обратной связи
+    if _is_feedback_chat(message.chat.id):
+        await state.clear()
+        return
     query = (message.text or "").strip()
     if not query:
         await message.answer("Поисковый запрос пустой. Введи текст для поиска.")
@@ -208,6 +228,10 @@ async def search_from_free_text(message: Message, state: FSMContext) -> None:
     # Не обрабатываем команды
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
+        return
+
+    # Не запускаем автопоиск в чате обратной связи
+    if _is_feedback_chat(message.chat.id):
         return
     
     # Ставим состояние поиска, чтобы другие роутеры (например, echo) не срабатывали параллельно
